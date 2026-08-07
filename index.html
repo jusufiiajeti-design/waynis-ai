@@ -102,6 +102,16 @@
   .agents-line{font-size:11px;color:var(--dim);background:rgba(167,139,250,.08);
     border:1px dashed rgba(167,139,250,.35);border-radius:10px;padding:8px 10px;
     margin:-2px 0 10px;line-height:1.6}
+  .agrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:4px 0 12px}
+  .ag{position:relative;background:var(--card2);border:1px solid var(--line);
+    border-radius:10px;padding:7px 4px 5px;text-align:center;transition:.2s;overflow:hidden}
+  .ag.active{border-color:var(--green);box-shadow:0 0 10px rgba(34,197,94,.25)}
+  .ag .ai{font-size:15px;display:block;line-height:1.1}
+  .ag .an{font-size:8px;color:var(--mut);font-weight:700;margin-top:3px;display:block;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ag .aw{position:absolute;top:2px;right:3px;font-size:8px;font-weight:800;
+    background:rgba(34,197,94,.15);color:var(--green);border-radius:99px;padding:0 5px}
+  .ag .aw.low{background:rgba(239,68,68,.15);color:var(--red)}
   .ai-box{margin-top:10px;border:1px solid rgba(56,189,248,.35);border-radius:12px;
     background:rgba(56,189,248,.06);cursor:pointer;overflow:hidden}
   .ai-head{display:flex;align-items:center;gap:8px;padding:10px 12px;font-size:12.5px;
@@ -266,8 +276,9 @@
     </div>
 
     <div class="card">
-      <h3>⚙️ 6-Cycle Execution Pipeline</h3>
-      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar agjentët…</div>
+      <h3>⚙️ 6-Cycle Execution Pipeline · 20 Agjentë</h3>
+      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 20 agjentët…</div>
+      <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
       <div class="conf-bar"><div class="conf-fill" id="confFill" style="width:0%"></div></div>
@@ -588,11 +599,12 @@ function renderStatus(){
   }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
+  renderAgentsGrid(S.status.agents);
   renderAIBox(S.status);
 }
 
 /* ================= pipeline ================= */
-const PIPE_AGENTS=[["📡","Scanner"],["🎯","Predictor"],["✅","Validator"],["⚖️","Sizer"],["⚡","Filler"],["📊","Tracker"]];
+const PIPE_AGENTS=[["📡","Scan"],["🗳️","Predict"],["✅","Validate"],["⚖️","Size"],["🚦","Fill"],["📊","Track"]];
 function renderPipeline(pp){
   const box=$("pipeSteps");
   const activeIdx = Math.min(pp.step, 5);
@@ -609,8 +621,21 @@ function renderPipeline(pp){
 }
 function renderAgentsLine(agents){
   if(!agents) return;
-  $("agentsLine").innerHTML = "🤖 Kontrollohet nga <b>6 agjentë</b> + koordinator: " +
-    agents.map(a=>a.icon+" "+a.name).join(" · ");
+  $("agentsLine").innerHTML = "🤖 <b>20 agjentë bashkëpunues</b>: 10 strategji votojnë → " +
+    "🗳️ konsensus me pesha të mësuara · 🎓 mësojnë pas çdo tregtie";
+}
+function renderAgentsGrid(agents){
+  if(!agents) return;
+  const active = S.status && S.status.pipeline ? S.status.pipeline.agent : "";
+  $("agentsGrid").innerHTML = agents.map(a=>{
+    let w = "";
+    if(a.kind==="strategy" && a.trades>0){
+      const cls = a.weight>=1.0 ? "" : "low";
+      w = `<span class="aw ${cls}">${a.weight.toFixed(2)}x</span>`;
+    }
+    return `<div class="ag ${a.name===active?"active":""}" title="${a.role}">
+      <span class="ai">${a.icon}</span><span class="an">${a.name}</span>${w}</div>`;
+  }).join("");
 }
 
 /* ================= AI reasoning panel ================= */

@@ -25,8 +25,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     MAX_OPEN, FEE_RATE, REAL_MIN_NOTIONAL,
                     REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS)
 from providers import MarketData, WATCHLIST
-from agents import (CycleContext, ScannerAgent, PredictorAgent, ValidatorAgent,
-                    SizerAgent, FillerAgent, TrackerAgent)
+from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
+                    load_weights, save_weights, DEFAULT_STATS)
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 
@@ -78,11 +78,10 @@ class PaperEngine:
         self.mode = settings.get("mode", "paper")   # "paper" | "real"
         self.exchange = get_exchange()              # real-money client
         self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
-        # six autonomous agents + coordinator (this engine)
-        self.agents = [
-            ScannerAgent(self), PredictorAgent(self), ValidatorAgent(self),
-            SizerAgent(self), FillerAgent(self), TrackerAgent(self),
-        ]
+        self.strategy_stats = load_weights()        # 🎓 learned weights
+        self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
+        # twenty autonomous agents + coordinator (this engine)
+        self.agents = [cls(self) for cls in ALL_AGENTS]
         self.pipeline = {
             "step": 0,
             "step_name": "Scanner",
@@ -122,9 +121,10 @@ class PaperEngine:
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
-            # migrate older DBs: add fees/bracket if missing
+            # migrate older DBs: add fees/bracket/votes if missing
             cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
-            for col, ddl in [("fees", "REAL"), ("bracket", "TEXT")]:
+            for col, ddl in [("fees", "REAL"), ("bracket", "TEXT"),
+                             ("votes", "TEXT")]:
                 if col not in cols:
                     try:
                         c.execute(f"ALTER TABLE trades ADD COLUMN {col} {ddl}")
@@ -340,11 +340,20 @@ class PaperEngine:
         }
 
     def agents_info(self):
-        return [
-            {"name": a.name, "icon": a.icon, "role": a.role, "step": a.step,
-             "active": self.pipeline.get("agent") == a.name}
-            for a in self.agents
-        ]
+        out = []
+        for a in self.agents:
+            info = {"name": a.name, "icon": a.icon, "role": a.role,
+                    "step": a.step, "kind": a.kind,
+                    "active": self.pipeline.get("agent") == a.name}
+            if a.kind == "strategy":
+                st = self.strategy_stats.get(a.name, dict(DEFAULT_STATS))
+                info.update({"weight": st.get("weight", 1.0),
+                             "wins": st.get("wins", 0),
+                             "losses": st.get("losses", 0),
+                             "trades": st.get("trades", 0),
+                             "pnl": round(st.get("pnl", 0.0), 2)})
+            out.append(info)
+        return out
 
     # ------------------------------------------------------------------
     # Coordinator loop
@@ -388,16 +397,18 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # Order management (owned by the coordinator; agents call these)
     # ------------------------------------------------------------------
-    def _open_trade(self, sig, qty, bracket=None):
+    def _open_trade(self, sig, qty, bracket=None, votes=None):
         if qty <= 0:
             return None
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO trades(symbol,side,entry,qty,tp,sl,status,"
-                "opened_at,confidence,bracket) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "opened_at,confidence,bracket,votes) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (sig["symbol"], sig["direction"], sig["entry"], qty,
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
-                 json.dumps(bracket) if bracket else None))
+                 json.dumps(bracket) if bracket else None,
+                 json.dumps(votes or [])))
             return cur.lastrowid
 
     def _update_sl(self, trade_id, new_sl):
@@ -562,7 +573,7 @@ class PaperEngine:
             self.equity_history.append((now, eq))
             self.equity_history = [e for e in self.equity_history if now - e[0] <= 86400 * 2]
 
-    def reset(self, seed=True):
+    def reset(self, seed=True, reset_learning=False):
         with self._conn() as c:
             for t in ("trades", "events"):
                 c.execute(f"DELETE FROM {t}")
@@ -572,6 +583,19 @@ class PaperEngine:
                 self._seed_history(c)
         self.equity_history = []
         self.cooldown = {}
+        if reset_learning:
+            self.strategy_stats = {}
+            self.learning_last_id = 0
+            save_weights(self.strategy_stats)
+            self._event("reset", "Peshat e mësuara të strategjive u rivendosën")
+        else:
+            self.learning_last_id = 0
         if seed:
             self._seed_equity()
         self._event("reset", "Llogaria u rivendos")
+
+    def persist_learning(self):
+        """Persist learning weights + last processed trade id."""
+        stats = dict(self.strategy_stats)
+        stats["__last_trade_id"] = self.learning_last_id
+        save_weights(stats)
