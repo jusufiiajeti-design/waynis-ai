@@ -28,6 +28,15 @@ TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
 
+# ---- 🔒 equity profit lock (protect account gains) ----
+# Once the account grows to a peak, never let it give back more than
+# EQUITY_LOCK_PCT from that peak — when triggered, ALL positions close
+# and new entries pause for EQUITY_LOCK_PAUSE_MIN minutes.
+EQUITY_LOCK_ENABLED = True
+EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
+EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
+
+
 
 # ============ providers.py ============
 """
@@ -1522,6 +1531,13 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
+        if e.is_locked():
+            mins = int((e.lock_until - time.time()) // 60) + 1
+            self.report(f"🔒 Profit-lock: push {mins} min — fitimet e mbrojtura",
+                        best["symbol"], best["direction"], best["confidence"])
+            ctx.stop = True
+            return
+
         if e.mode == "real":
             if not e.exchange.configured:
                 self.report("💰 REAL: çelësat s'janë konfiguruar "
@@ -1937,6 +1953,10 @@ class PaperEngine:
         self.mode = settings.get("mode", "paper")   # "paper" | "real"
         self.exchange = get_exchange()              # real-money client
         self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
+        self.lock_until = 0.0                       # 🔒 profit-lock until ts
+        self.equity_lock_enabled = settings.get("equity_lock_enabled",
+                                                EQUITY_LOCK_ENABLED)
+        self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -2079,6 +2099,78 @@ class PaperEngine:
                 val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
+
+    # ------------------------------------------------------------------
+    # 🔒 Equity profit lock
+    # ------------------------------------------------------------------
+    def is_locked(self):
+        return time.time() < self.lock_until
+
+    def lock_info(self):
+        return {
+            "enabled": bool(self.equity_lock_enabled),
+            "pct": self.equity_lock_pct,
+            "locked": self.is_locked(),
+            "until": self.lock_until,
+        }
+
+    def set_equity_lock(self, enabled=None, pct=None):
+        if enabled is not None:
+            self.equity_lock_enabled = bool(enabled)
+        if pct is not None:
+            self.equity_lock_pct = max(0.003, min(0.15, float(pct)))
+        s = _load_settings()
+        s["equity_lock_enabled"] = self.equity_lock_enabled
+        s["equity_lock_pct"] = self.equity_lock_pct
+        _save_settings(s)
+        self._event("settings",
+                    f"🔒 Mbrojtja e fitimit: {'ON' if self.equity_lock_enabled else 'OFF'} "
+                    f"({self.equity_lock_pct*100:.1f}% nga kulmi)")
+        return self.lock_info()
+
+    async def _close_all(self, reason="lock"):
+        closed = 0
+        for pos in self.open_positions():
+            price = self.last_tickers.get(pos["symbol"], {}).get("price") \
+                or pos["entry"]
+            if self.mode == "real":
+                await self.real_close(pos, price, reason)
+            else:
+                await self._close_trade(pos, price, reason)
+            closed += 1
+        return closed
+
+    async def check_profit_lock(self):
+        """If equity falls more than X% below its peak, close EVERYTHING
+        and pause new entries — this is the 'don't give back the gains'
+        protection."""
+        if not self.equity_lock_enabled or self.is_locked():
+            return False
+        acc = self.account()
+        eq = acc["equity"]
+        with self._conn() as c:
+            row = c.execute("SELECT peak FROM account WHERE id=1").fetchone()
+            peak = float(row[0]) if row and row[0] else eq
+        if eq > peak:
+            with self._conn() as c:
+                c.execute("UPDATE account SET peak=? WHERE id=1", (eq,))
+            return False
+        floor = peak * (1.0 - self.equity_lock_pct)
+        if eq < floor and peak > 0:
+            n = await self._close_all("lock")
+            self.lock_until = time.time() + EQUITY_LOCK_PAUSE_MIN * 60
+            with self._conn() as c:
+                c.execute("UPDATE account SET peak=? WHERE id=1",
+                          (self.account()["equity"],))
+            self._event(
+                "lock",
+                f"🔒 Mbrojtja e fitimit: equity ra nën {self.equity_lock_pct*100:.1f}% "
+                f"nga kulmi ${peak:.2f} → u mbyllën {n} pozicione. "
+                f"Push {EQUITY_LOCK_PAUSE_MIN} min para tregtive të reja.",
+                None)
+            self._set_pipeline(0, "Lock", "🔒 Profit-lock aktiv — push përkohësisht")
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Mode (paper / real)
@@ -2283,6 +2375,11 @@ class PaperEngine:
 
     async def _cycle(self, idx):
         self.pipeline["cycles_run"] += 1
+        # 🔒 profit-lock check before anything else
+        try:
+            await self.check_profit_lock()
+        except Exception:
+            pass
         ctx = CycleContext(self, self.market, idx)
         for agent in self.agents:
             if ctx.stop:
@@ -2766,6 +2863,7 @@ async def status():
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
+        "lock": engine.lock_info(),
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -2850,6 +2948,11 @@ async def set_settings(body: dict):
         return {"ok": True, "mode": new_mode,
                 "auto_trade": engine.auto_trade,
                 "compound": engine.compound}
+    if "equity_lock_enabled" in body or "equity_lock_pct" in body:
+        info = engine.set_equity_lock(
+            enabled=body.get("equity_lock_enabled"),
+            pct=body.get("equity_lock_pct"))
+        return {"ok": True, "lock": info}
     return {"ok": True, "auto_trade": engine.auto_trade,
             "compound": engine.compound, "mode": engine.mode}
 

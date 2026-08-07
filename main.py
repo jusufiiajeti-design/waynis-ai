@@ -235,6 +235,7 @@ async def status():
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
+        "lock": engine.lock_info(),
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -319,6 +320,11 @@ async def set_settings(body: dict):
         return {"ok": True, "mode": new_mode,
                 "auto_trade": engine.auto_trade,
                 "compound": engine.compound}
+    if "equity_lock_enabled" in body or "equity_lock_pct" in body:
+        info = engine.set_equity_lock(
+            enabled=body.get("equity_lock_enabled"),
+            pct=body.get("equity_lock_pct"))
+        return {"ok": True, "lock": info}
     return {"ok": True, "auto_trade": engine.auto_trade,
             "compound": engine.compound, "mode": engine.mode}
 

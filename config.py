@@ -26,3 +26,12 @@ PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
+
+# ---- 🔒 equity profit lock (protect account gains) ----
+# Once the account grows to a peak, never let it give back more than
+# EQUITY_LOCK_PCT from that peak — when triggered, ALL positions close
+# and new entries pause for EQUITY_LOCK_PAUSE_MIN minutes.
+EQUITY_LOCK_ENABLED = True
+EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
+EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
+

@@ -381,6 +381,22 @@
         <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
         <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
       </div>
+      <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
+        <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
+        <div class="switch on" id="swLock" onclick="toggleLock()"></div>
+      </div>
+      <div class="set" style="margin-top:2px">
+        <div><div class="l">Toleranca nga kulmi</div><div class="d">Sa mund të bjerë equity nga më e larta përpara mbrojtjes</div></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" id="lockPctInp" min="0.3" max="15" step="0.5" value="2"
+            class="inp" style="width:64px" onchange="saveLockPct()">
+          <span class="kbd">%</span>
+        </div>
+      </div>
+      <div class="set">
+        <div><div class="l">Statusi i mbrojtjes</div><div class="d">Kulmi aktual i llogarisë dhe kur ndizet</div></div>
+        <div class="kbd" id="lockState">—</div>
+      </div>
       <div class="set" style="border-top:1px dashed rgba(239,68,68,.4);margin-top:6px">
         <div><div class="l" style="color:var(--red)">💰 Para reale (Real Mode)</div><div class="d">Spot · vetëm LONG · pa leverage · TP/SL në exchange</div></div>
         <div class="switch" id="swMode" onclick="toggleMode()"></div>
@@ -641,6 +657,14 @@ function renderStatus(){
       `Çelësat: ${r.configured?"✅ të konfiguruar":"❌ MUNGON konfigurimi — vendos BINANCE_API_KEY/SECRET te Render → Environment"}`+
       (r.configured?`<br>Maks pozicione: <b>${r.max_positions}</b> · Maks/urdhër: <b>${Math.round(r.max_notional_pct*100)}%</b> e balancës`:"");
   }
+  // 🔒 profit lock state
+  const lk = S.status.lock||{};
+  $("swLock").classList.toggle("on", !!lk.enabled);
+  $("lockPctLbl").textContent = (lk.pct*100||2)+"%";
+  $("lockPctInp").value = Math.round((lk.pct||0.02)*1000)/10;
+  const lkEl=$("lockState");
+  if(lk.locked){ lkEl.textContent="🔒 AKTIV — push"; lkEl.style.color="var(--amber)"; }
+  else { lkEl.textContent = lk.enabled?"Gati (mbrojtje aktive)":"OFF"; lkEl.style.color=""; }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
   renderAgentsGrid(S.status.agents);
@@ -944,6 +968,7 @@ function renderEvents(){
     const dot = ev.type==="fill"?'<span class="badge b-open">FILL</span>'
       : ev.type==="close"?'<span class="badge b-win">EXIT</span>'
       : ev.type==="ai"?'<span class="badge bl">AI</span>'
+      : ev.type==="lock"?'<span class="badge" style="background:rgba(251,191,36,.15);color:var(--amber)">🔒 LOCK</span>'
       : ev.type==="seed"||ev.type==="reset"||ev.type==="settings"?'<span class="badge">SYS</span>'
       : '<span class="badge">INFO</span>';
     return `<div class="ev"><span class="t">${fmtTime(ev.ts)}</span><span class="m">${dot} ${ev.msg}</span></div>`;
@@ -1060,6 +1085,24 @@ async function toggleCompound(){
     toast(on?"Komponimi AKTIV — fitimet ri-investohen":"Komponimi OFF — madhësi fikse pozicionesh");
     refreshEquity();
   }catch(e){ sw.classList.toggle("on"); }
+}
+async function toggleLock(){
+  const sw=$("swLock"); sw.classList.toggle("on");
+  const on=sw.classList.contains("on");
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({equity_lock_enabled:on})});
+    S.status.lock=d.lock; renderStatus();
+    toast(on?"🔒 Mbrojtja e fitimit AKTIV":"Mbrojtja e fitimit OFF");
+  }catch(e){ sw.classList.toggle("on"); }
+}
+async function saveLockPct(){
+  const v=parseFloat($("lockPctInp").value);
+  if(!v||v<0.3||v>15){ toast("Vlera 0.3% – 15%"); return; }
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({equity_lock_pct:v})});
+    S.status.lock=d.lock; renderStatus();
+    toast(`🔒 Toleranca u vendos në ${v}% nga kulmi`);
+  }catch(e){ toast("Gabim"); }
 }
 async function toggleMode(){
   const sw=$("swMode");

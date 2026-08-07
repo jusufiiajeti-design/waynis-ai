@@ -25,7 +25,9 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     MAX_OPEN, FEE_RATE, REAL_MIN_NOTIONAL,
                     REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
-                    TRAIL_PCT, RUNNER_BE)
+                    TRAIL_PCT, RUNNER_BE,
+                    EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
+                    EQUITY_LOCK_PAUSE_MIN)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -81,6 +83,10 @@ class PaperEngine:
         self.mode = settings.get("mode", "paper")   # "paper" | "real"
         self.exchange = get_exchange()              # real-money client
         self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
+        self.lock_until = 0.0                       # 🔒 profit-lock until ts
+        self.equity_lock_enabled = settings.get("equity_lock_enabled",
+                                                EQUITY_LOCK_ENABLED)
+        self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -223,6 +229,78 @@ class PaperEngine:
                 val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
+
+    # ------------------------------------------------------------------
+    # 🔒 Equity profit lock
+    # ------------------------------------------------------------------
+    def is_locked(self):
+        return time.time() < self.lock_until
+
+    def lock_info(self):
+        return {
+            "enabled": bool(self.equity_lock_enabled),
+            "pct": self.equity_lock_pct,
+            "locked": self.is_locked(),
+            "until": self.lock_until,
+        }
+
+    def set_equity_lock(self, enabled=None, pct=None):
+        if enabled is not None:
+            self.equity_lock_enabled = bool(enabled)
+        if pct is not None:
+            self.equity_lock_pct = max(0.003, min(0.15, float(pct)))
+        s = _load_settings()
+        s["equity_lock_enabled"] = self.equity_lock_enabled
+        s["equity_lock_pct"] = self.equity_lock_pct
+        _save_settings(s)
+        self._event("settings",
+                    f"🔒 Mbrojtja e fitimit: {'ON' if self.equity_lock_enabled else 'OFF'} "
+                    f"({self.equity_lock_pct*100:.1f}% nga kulmi)")
+        return self.lock_info()
+
+    async def _close_all(self, reason="lock"):
+        closed = 0
+        for pos in self.open_positions():
+            price = self.last_tickers.get(pos["symbol"], {}).get("price") \
+                or pos["entry"]
+            if self.mode == "real":
+                await self.real_close(pos, price, reason)
+            else:
+                await self._close_trade(pos, price, reason)
+            closed += 1
+        return closed
+
+    async def check_profit_lock(self):
+        """If equity falls more than X% below its peak, close EVERYTHING
+        and pause new entries — this is the 'don't give back the gains'
+        protection."""
+        if not self.equity_lock_enabled or self.is_locked():
+            return False
+        acc = self.account()
+        eq = acc["equity"]
+        with self._conn() as c:
+            row = c.execute("SELECT peak FROM account WHERE id=1").fetchone()
+            peak = float(row[0]) if row and row[0] else eq
+        if eq > peak:
+            with self._conn() as c:
+                c.execute("UPDATE account SET peak=? WHERE id=1", (eq,))
+            return False
+        floor = peak * (1.0 - self.equity_lock_pct)
+        if eq < floor and peak > 0:
+            n = await self._close_all("lock")
+            self.lock_until = time.time() + EQUITY_LOCK_PAUSE_MIN * 60
+            with self._conn() as c:
+                c.execute("UPDATE account SET peak=? WHERE id=1",
+                          (self.account()["equity"],))
+            self._event(
+                "lock",
+                f"🔒 Mbrojtja e fitimit: equity ra nën {self.equity_lock_pct*100:.1f}% "
+                f"nga kulmi ${peak:.2f} → u mbyllën {n} pozicione. "
+                f"Push {EQUITY_LOCK_PAUSE_MIN} min para tregtive të reja.",
+                None)
+            self._set_pipeline(0, "Lock", "🔒 Profit-lock aktiv — push përkohësisht")
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Mode (paper / real)
@@ -427,6 +505,11 @@ class PaperEngine:
 
     async def _cycle(self, idx):
         self.pipeline["cycles_run"] += 1
+        # 🔒 profit-lock check before anything else
+        try:
+            await self.check_profit_lock()
+        except Exception:
+            pass
         ctx = CycleContext(self, self.market, idx)
         for agent in self.agents:
             if ctx.stop:

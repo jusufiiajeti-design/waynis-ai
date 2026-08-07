@@ -379,6 +379,13 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
+        if e.is_locked():
+            mins = int((e.lock_until - time.time()) // 60) + 1
+            self.report(f"🔒 Profit-lock: push {mins} min — fitimet e mbrojtura",
+                        best["symbol"], best["direction"], best["confidence"])
+            ctx.stop = True
+            return
+
         if e.mode == "real":
             if not e.exchange.configured:
                 self.report("💰 REAL: çelësat s'janë konfiguruar "
