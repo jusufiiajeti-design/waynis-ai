@@ -6,7 +6,29 @@ Pa para reale — vetëm simulim. Hapet në çdo browser, perfekt në **Android*
 
 ---
 
-## 🤖 Arkitektura: 6 agjentë + koordinator
+## 🤖 Arkitektura: 20 agjentë bashkëpunues (multi-strategji + mësim)
+
+Boti kontrollohet nga **20 agjentë** që punojnë së bashku në 6 faza:
+
+| Faza | Agjentët |
+|------|----------|
+| **Scan** | 📡 Scanner |
+| **Predict** | 📈 EMA Trend · 🔄 RSI Reversal · 🌊 MACD Momentum · 🎈 Bollinger Break · ⚡ Stochastic · 🔊 Volume Spike · 📏 ATR Channel · 🚀 Donchian Break · 🏎️ ROC Momentum · 🐢 Slow Trend → 🗳️ **Consensus** → 🧠 AI Predictor |
+| **Validate** | 🌦️ Regime · ✅ Validator · 🛡️ Risk Manager |
+| **Size** | ⚖️ Sizer |
+| **Fill** | 🚦 Filler |
+| **Track** | 📊 Tracker · 🎓 **Learning Agent** |
+
+**Bashkëpunimi:** 10 strategjitë VOTOJNË për çdo monedhë. 🗳️ Consensus-i i
+kombinon votat me **peshat e mësuara** → fiton sinjali me konsensus më të fortë.
+
+**Mësimi:** pas çdo tregtie të mbyllur, 🎓 Learning Agent-i e **shpërblen**
+strategjinë që votoi drejt (pesha rritet) ose e **ul** atë që votoi gabim.
+Peshat ruhen në `data/strategy_weights.json` dhe shfaqen në dashboard —
+kështu boti **aftësohet me kalimin e kohës**: strategjitë që fitojnë marrin
+gjithnjë e më shumë influencë.
+
+## 🧠 AI Logic — agjentët "mendojnë" para se të veprojnë
 
 Boti **nuk** është një motor i vetëm — kontrollohet nga **6 agjentë të
 specializuar** të cilët komunikojnë përmes një autobusi të përbashkët
