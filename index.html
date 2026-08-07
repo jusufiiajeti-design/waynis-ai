@@ -355,8 +355,15 @@
       <div class="tsum"><div class="n" id="tRate">0%</div><div class="l">Win rate</div></div>
       <div class="tsum"><div class="n up" id="tNet">+0.00</div><div class="l">PnL neto</div></div>
     </div>
+    <div class="tradesum" style="margin-top:6px">
+      <div class="tsum"><div class="n up" id="tAvgWin">+0.00</div><div class="l">Fitim mesatar</div></div>
+      <div class="tsum"><div class="n dn" id="tAvgLoss">−0.00</div><div class="l">Humbje mesatare</div></div>
+      <div class="tsum"><div class="n up" id="tRR">1:1</div><div class="l">Fitim:Humbje</div></div>
+      <div class="tsum"><div class="n" id="tFees">$0</div><div class="l">Tarifa</div></div>
+    </div>
     <div style="font-size:10.5px;color:var(--dim);margin:2px 0 8px;text-align:center">
-      Tarifa të paguara gjithsej: <b id="feesPaid" style="color:var(--amber)">$0.00</b> · PnL-i është <b>pas tarifave</b> (0.1% / anë)
+      🎯 Payoff asimetrik: në <b>+0.5%</b> mbyllet gjysma (fitim i sigurt) · pjesa tjetër
+      vazhdon me <b>stop lëvizës</b> për fitime më të mëdha. PnL-i është <b>pas tarifave</b>.
     </div>
     <div class="sec-t">🧾 Historiku i tregtive</div>
     <div id="tradeList"></div>
@@ -609,6 +616,11 @@ function renderStatus(){
   $("tRate").textContent=fmt(st.win_rate,1)+"%";
   const net=$("tNet"); net.textContent=sign(st.realized)+fmt(st.realized); net.className="n "+(st.realized>=0?"up":"dn");
   if($("feesPaid")) $("feesPaid").textContent = "$"+fmt(st.fees_paid||0);
+  // asymmetry stats
+  const aw=$("tAvgWin"); if(aw) aw.textContent = "+"+fmt(st.avg_win||0);
+  const al=$("tAvgLoss"); if(al) al.textContent = "−"+fmt(Math.abs(st.avg_loss||0));
+  const rrEl=$("tRR"); if(rrEl){ rrEl.textContent = "1:"+fmt(st.rr||0); rrEl.className="n "+( (st.rr||0)>=1.1?"up":(st.rr||0)>=0.9?"":"dn"); }
+  const feesEl=$("tFees"); if(feesEl) feesEl.textContent = "$"+fmt(st.fees_paid||0);
   // compound state
   const sw=$("swCompound");
   sw.classList.toggle("on", !!S.status.compound);
@@ -953,9 +965,13 @@ function renderTrades(){
       <div class="t-grid">
         <div>Hyrja<b>${fmtPrice(t.entry)}</b></div>
         <div>Dalja<b>${open?"—":fmtPrice(t.exit)}</b></div>
-        <div>Sasia<b>${fmt(t.qty,4)}</b></div>
+        <div>Sasia<b>${fmt(t.qty,4)}${t.tp1_hit?'<span style="color:var(--blue)">*</span>':""}</b></div>
         <div class="t-pnl">PnL<b class="${(t.pnl??0)>=0?'up':'dn'}">${t.pnl==null?"—":sign(t.pnl)+fmt(t.pnl)}</b></div>
       </div>
+      ${open && t.tp1 ? `<div style="margin-top:6px;font-size:9.5px;color:var(--dim)">
+        ${t.tp1_hit
+          ? `⚡ TP1 u mbyll (+${fmt(t.partial_pnl,2)}) · pjesa tjetër ${t.qty.toFixed(4)} me trailing`
+          : `TP1 +0.5% → ${fmtPrice(t.tp1)} · SL ${fmtPrice(t.sl)}`}</div>`:""}
       <div style="display:flex;justify-content:space-between;margin-top:7px;font-size:10px;color:var(--dim)">
         <span>${fmtTime(t.opened_at)}${t.closed_at?" → "+fmtTime(t.closed_at):""}</span>
         <span>${t.fees?`Tarifa $${fmt(t.fees)} · `:""}Konf. ${fmt(t.confidence,0)}%${t.reason?` · ${t.reason.toUpperCase()}`:""}</span>

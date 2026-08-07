@@ -19,6 +19,14 @@ REAL_MAX_POSITIONS = 2          # max concurrent real positions
 REAL_TP = 0.0045                # +0.45%
 REAL_SL = 0.0035                # -0.35%
 
+# ---- asymmetric payoff: wins > losses ("arbitrage-like" edge) ----
+ENABLE_PARTIAL_TP = True        # partial take-profit + trailing runner (paper)
+TP1_PARTIAL = 0.005             # take half of the position at +0.5%
+PARTIAL_FRACTION = 0.5          # fraction sold at TP1
+TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
+RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
+REL_STRENGTH_BOOST = True       # cross-symbol relative-strength filter
+
 
 # ============ providers.py ============
 """
@@ -1323,6 +1331,7 @@ class ConsensusAgent(Agent):
         e = self.engine
         weights = e.strategy_stats
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
+        rms = self._relative_strength(ctx)                # "arbitrage" across symbols
         candidates = []
 
         for sym, votes in ctx.votes.items():
@@ -1346,11 +1355,30 @@ class ConsensusAgent(Agent):
             if len(supporting) < 2:              # duhen ≥2 strategji bashkë
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
+            rms_note = ""
+            if REL_STRENGTH_BOOST and rms is not None and sym in rms:
+                s, rank = rms[sym]
+                # buy relative strength, avoid relative weakness
+                if direction == "LONG":
+                    if rank >= 0.5:
+                        confidence = min(94, confidence + 4)
+                        rms_note = f" · RMS {rank:.0%} (i fortë)"
+                    elif rank <= 0.2:
+                        confidence = max(45, confidence - 6)
+                        rms_note = f" · ⚠️ RMS {rank:.0%} (i dobët)"
+                else:
+                    if rank <= 0.5:
+                        confidence = min(94, confidence + 4)
+                        rms_note = f" · RMS {rank:.0%} (i dobët)"
+                    elif rank >= 0.8:
+                        confidence = max(45, confidence - 6)
+                        rms_note = f" · ⚠️ RMS {rank:.0%} (i fortë)"
             candidates.append({
                 "symbol": sym, "direction": direction,
                 "confidence": confidence, "score": score,
                 "supporting": supporting,
                 "n_votes": len(votes),
+                "rms_note": rms_note,
             })
 
         if not candidates:
@@ -1366,9 +1394,37 @@ class ConsensusAgent(Agent):
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
-            f"(net {best['score']:+.2f}, prag {threshold:.2f}) · mbështesin: "
+            f"(net {best['score']:+.2f}, prag {threshold:.2f})"
+            f"{best.get('rms_note', '')} · mbështesin: "
             f"{', '.join(best['supporting'][:4])}",
             best["symbol"], best["direction"], best["confidence"])
+
+    @staticmethod
+    def _relative_strength(ctx):
+        """Cross-symbol ranking (mini 'arbitrage'): long the strong, short
+        the weak. Returns {symbol: (score, percentile_rank)}."""
+        if not REL_STRENGTH_BOOST:
+            return None
+        scores = {}
+        for sym, klines in ctx.candles.items():
+            try:
+                closes = [c["c"] for c in klines]
+                if len(closes) < 12:
+                    continue
+                roc10 = (closes[-1] - closes[-11]) / closes[-11] * 100 if closes[-11] else 0
+                chg24 = (ctx.tickers.get(sym) or {}).get("chg24") or 0.0
+                e9 = strat_ema(closes, 9)[-1]
+                e21 = strat_ema(closes, 21)[-1]
+                trend = 1.0 if e9 > e21 else -1.0
+                scores[sym] = roc10 * 0.5 + chg24 * 0.3 + trend * 0.2
+            except Exception:
+                continue
+        if not scores:
+            return None
+        ordered = sorted(scores.items(), key=lambda kv: kv[1])
+        n = len(ordered)
+        return {sym: (sc, (i + 1) / n)
+                for i, (sym, sc) in enumerate(ordered)}
 
 
 # ======================================================================
@@ -1657,31 +1713,69 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
-            hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
-            hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
 
-            if not hit_tp and not hit_sl:
-                if side == "LONG" and price >= pos["entry"] * (1 + BREAKEVEN_AT):
-                    new_sl = pos["entry"] * 1.0005
+            if e.mode == "real":
+                await self._track_real(e, pos, price)
+                continue
+
+            if side != "LONG" or not ENABLE_PARTIAL_TP or not pos.get("tp1"):
+                # classic symmetric handling (SHORT or partial off)
+                await self._track_classic(e, pos, price)
+                continue
+
+            # ---------- ASYMMETRIC LONG: partial TP + trailing runner ----------
+            hit_sl = price <= pos["sl"]
+            if hit_sl:
+                await e._close_trade(pos, price, "sl")
+                continue
+
+            if not pos["tp1_hit"]:
+                if price >= pos["tp1"]:
+                    e._sell_partial(pos, price)           # bank half the profit
+                elif price >= pos["entry"] * (1 + BREAKEVEN_AT):
+                    new_sl = pos["entry"] * 1.0005        # early breakeven guard
                     if new_sl > pos["sl"]:
                         e._update_sl(pos["id"], new_sl)
-                elif side == "SHORT" and price <= pos["entry"] * (1 - BREAKEVEN_AT):
-                    new_sl = pos["entry"] * 0.9995
-                    if new_sl < pos["sl"]:
-                        e._update_sl(pos["id"], new_sl)
-
-            if hit_tp or hit_sl:
-                if e.mode == "real":
-                    await e.real_close(pos, price, "tp" if hit_tp else "sl")
-                else:
-                    await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+            else:
+                # runner: trail the stop below the highest price reached
+                peak = max(pos.get("trail_high") or price, price)
+                new_sl = peak * (1 - TRAIL_PCT)
+                if new_sl > pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+                    e._set_trail_high(pos["id"], peak)
+                if price <= pos["sl"]:
+                    await e._close_trade(pos, price, "trail")
 
         if positions:
             p = positions[0]
-            self.report(f"{len(positions)} pozicion(e) aktive — duke monitoruar TP/SL",
+            tag = " (asimetrik)" if (ENABLE_PARTIAL_TP and p["side"] == "LONG") else ""
+            self.report(f"{len(positions)} pozicion(e) aktive{tag} — TP1 + trailing",
                         p["symbol"], p["side"])
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
+
+    async def _track_classic(self, e, pos, price):
+        side = pos["side"]
+        hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
+        hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        if not hit_tp and not hit_sl:
+            if side == "LONG" and price >= pos["entry"] * (1 + BREAKEVEN_AT):
+                new_sl = pos["entry"] * 1.0005
+                if new_sl > pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+            elif side == "SHORT" and price <= pos["entry"] * (1 - BREAKEVEN_AT):
+                new_sl = pos["entry"] * 0.9995
+                if new_sl < pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+        if hit_tp or hit_sl:
+            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+
+    async def _track_real(self, e, pos, price):
+        side = pos["side"]
+        hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
+        hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        if hit_tp or hit_sl:
+            await e.real_close(pos, price, "tp" if hit_tp else "sl")
 
 
 # ======================================================================
@@ -1876,14 +1970,19 @@ class PaperEngine:
                 symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL,
                 tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT,
                 pnl REAL, confidence REAL, reason TEXT,
-                fees REAL, bracket TEXT, votes TEXT)""")
+                fees REAL, bracket TEXT, votes TEXT,
+                tp1 REAL, tp1_hit INTEGER DEFAULT 0,
+                partial_pnl REAL, trail_high REAL)""")
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
-            # migrate older DBs: add fees/bracket/votes if missing
+            # migrate older DBs: add fees/bracket/votes/partial-tp if missing
             cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
             for col, ddl in [("fees", "REAL"), ("bracket", "TEXT"),
-                             ("votes", "TEXT")]:
+                             ("votes", "TEXT"), ("tp1", "REAL"),
+                             ("tp1_hit", "INTEGER DEFAULT 0"),
+                             ("partial_pnl", "REAL"),
+                             ("trail_high", "REAL")]:
                 if col not in cols:
                     try:
                         c.execute(f"ALTER TABLE trades ADD COLUMN {col} {ddl}")
@@ -1922,10 +2021,12 @@ class PaperEngine:
             notional = 1200 + random.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = notional * 0.0026 * (0.8 + random.random() * 0.5)
+                # asymmetric: wins are bigger (partial TP + trailing runner)
+                pnl = notional * 0.0065 * (0.8 + random.random() * 0.7)
                 status = "win"
             else:
-                pnl = -notional * 0.0055 * (0.8 + random.random() * 0.4)
+                # losses stay small
+                pnl = -notional * 0.0040 * (0.7 + random.random() * 0.4)
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
             opened = base + i * 5700 + random.random() * 2000
@@ -2045,10 +2146,12 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT symbol,side,entry,qty,tp,sl,opened_at,id,confidence,"
-                "bracket FROM trades WHERE status='open'").fetchall()
+                "bracket,tp1,tp1_hit,partial_pnl,trail_high "
+                "FROM trades WHERE status='open'").fetchall()
         out = []
         for r in rows:
-            sym, side, entry, qty, tp, sl, opened, tid, conf, bracket = r
+            (sym, side, entry, qty, tp, sl, opened, tid, conf, bracket,
+             tp1, tp1_hit, partial_pnl, trail_high) = r
             price = self.last_tickers.get(sym, {}).get("price") or entry
             if side == "LONG":
                 pnl = (price - entry) * qty
@@ -2058,9 +2161,32 @@ class PaperEngine:
                 "id": tid, "symbol": sym, "side": side, "entry": entry,
                 "qty": qty, "tp": tp, "sl": sl, "opened_at": opened,
                 "confidence": conf, "pnl": round(pnl, 2), "price": price,
-                "bracket": bracket,
+                "bracket": bracket, "tp1": tp1, "tp1_hit": bool(tp1_hit),
+                "partial_pnl": round(partial_pnl or 0.0, 2),
+                "trail_high": trail_high,
             })
         return out
+
+    def _sell_partial(self, pos, price):
+        """Take profit on half the position (TP1). Remaining half becomes a
+        runner with a trailing stop — this is what makes wins bigger."""
+        half = pos["qty"] * PARTIAL_FRACTION
+        gross = (price - pos["entry"]) * half
+        fees = (pos["entry"] * half + price * half) * FEE_RATE
+        net = gross - fees
+        with self._conn() as c:
+            c.execute(
+                "UPDATE trades SET qty=qty-?, tp1_hit=1, partial_pnl=?, sl=? "
+                "WHERE id=?",
+                (half, net, pos["entry"] * (1 + RUNNER_BE), pos["id"]))
+            c.execute(
+                "UPDATE account SET balance=balance+?, "
+                "peak=MAX(peak,balance+?) WHERE id=1", (net, net))
+        self._event(
+            "partial",
+            f"⚡ {pos['side']} {pos['symbol']}: TP1 +{TP1_PARTIAL*100:.1f}% — "
+            f"gjysma u mbyll {net:+.2f} USDT · pjesa tjetër vazhdon me trailing",
+            pos["symbol"])
 
     def stats(self):
         with self._conn() as c:
@@ -2072,6 +2198,12 @@ class PaperEngine:
         win_rate = round(100.0 * wins / total, 1) if total else 0.0
         realized = round(sum(p for _, p, _, _ in closed), 2)
         fees = round(sum(f for _, _, _, f in closed if f), 2)
+        # asymmetry: average win vs average loss (the "arbitrage" edge)
+        wins_pnl = [p for s, p, _, _ in closed if s == "win" and p > 0]
+        loss_pnl = [p for s, p, _, _ in closed if s == "loss" and p < 0]
+        avg_win = round(sum(wins_pnl) / len(wins_pnl), 2) if wins_pnl else 0.0
+        avg_loss = round(sum(loss_pnl) / len(loss_pnl), 2) if loss_pnl else 0.0
+        rr = round(avg_win / abs(avg_loss), 2) if avg_loss else 0.0
         now = time.time()
         cutoff = now - 86400
         snap24 = [e for e in self.equity_history if e[0] <= cutoff]
@@ -2093,6 +2225,9 @@ class PaperEngine:
             "trades": total,
             "realized": realized,
             "fees_paid": fees,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "rr": rr,
             "pnl_24h": round(pnl24, 2),
             "avg_day": avg_day,
             "open": len(self.open_positions()),
@@ -2159,23 +2294,34 @@ class PaperEngine:
     def _open_trade(self, sig, qty, bracket=None, votes=None):
         if qty <= 0:
             return None
+        entry = sig["entry"]
+        tp1 = None
+        if ENABLE_PARTIAL_TP and sig.get("direction") == "LONG":
+            tp1 = entry * (1 + TP1_PARTIAL)
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO trades(symbol,side,entry,qty,tp,sl,status,"
-                "opened_at,confidence,bracket,votes) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (sig["symbol"], sig["direction"], sig["entry"], qty,
+                "opened_at,confidence,bracket,votes,tp1) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sig["symbol"], sig["direction"], entry, qty,
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
-                 json.dumps(votes or [])))
+                 json.dumps(votes or []), tp1))
             return cur.lastrowid
 
     def _update_sl(self, trade_id, new_sl):
         with self._conn() as c:
             c.execute("UPDATE trades SET sl=? WHERE id=?", (new_sl, trade_id))
 
+    def _set_trail_high(self, trade_id, peak):
+        with self._conn() as c:
+            c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
+
     async def _close_trade(self, pos, price, reason):
-        """Close a PAPER position (with real fees simulated)."""
+        """Close a PAPER position (with real fees simulated).
+        If TP1 already banked half the profit, the trade's total PnL shown
+        in the ledger = runner PnL + partial PnL (balance credits only the
+        runner part — the partial was already credited at TP1)."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -2183,12 +2329,14 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
-        status = "win" if pnl > 0 else "loss"
+        partial = pos.get("partial_pnl") or 0.0
+        total_pnl = pnl + partial
+        status = "win" if total_pnl > 0 else "loss"
         with self._conn() as c:
             c.execute(
                 "UPDATE trades SET exit=?, status=?, closed_at=?, pnl=?, "
                 "reason=?, fees=? WHERE id=?",
-                (price, status, now_iso(), pnl, reason, fees, pos["id"]))
+                (price, status, now_iso(), total_pnl, reason, fees, pos["id"]))
             c.execute(
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
@@ -2196,7 +2344,7 @@ class PaperEngine:
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT "
+                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
                     f"(tarifa ${fees:.2f})",
                     pos["symbol"])
 
@@ -2300,11 +2448,13 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
-                "closed_at,pnl,confidence,reason,fees,bracket,votes FROM trades "
+                "closed_at,pnl,confidence,reason,fees,bracket,votes,tp1,"
+                "tp1_hit,partial_pnl FROM trades "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         keys = ["id", "symbol", "side", "entry", "exit", "qty", "tp", "sl",
                 "status", "opened_at", "closed_at", "pnl", "confidence",
-                "reason", "fees", "bracket", "votes"]
+                "reason", "fees", "bracket", "votes", "tp1",
+                "tp1_hit", "partial_pnl"]
         out = []
         for r in rows:
             d = dict(zip(keys, r))

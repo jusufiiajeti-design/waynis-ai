@@ -23,7 +23,9 @@ from datetime import datetime, timezone
 from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT, MIN_CONFIDENCE,
                     MAX_OPEN, FEE_RATE, REAL_MIN_NOTIONAL,
-                    REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS)
+                    REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS,
+                    ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
+                    TRAIL_PCT, RUNNER_BE)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -121,14 +123,19 @@ class PaperEngine:
                 symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL,
                 tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT,
                 pnl REAL, confidence REAL, reason TEXT,
-                fees REAL, bracket TEXT, votes TEXT)""")
+                fees REAL, bracket TEXT, votes TEXT,
+                tp1 REAL, tp1_hit INTEGER DEFAULT 0,
+                partial_pnl REAL, trail_high REAL)""")
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
-            # migrate older DBs: add fees/bracket/votes if missing
+            # migrate older DBs: add fees/bracket/votes/partial-tp if missing
             cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
             for col, ddl in [("fees", "REAL"), ("bracket", "TEXT"),
-                             ("votes", "TEXT")]:
+                             ("votes", "TEXT"), ("tp1", "REAL"),
+                             ("tp1_hit", "INTEGER DEFAULT 0"),
+                             ("partial_pnl", "REAL"),
+                             ("trail_high", "REAL")]:
                 if col not in cols:
                     try:
                         c.execute(f"ALTER TABLE trades ADD COLUMN {col} {ddl}")
@@ -167,10 +174,12 @@ class PaperEngine:
             notional = 1200 + random.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = notional * 0.0026 * (0.8 + random.random() * 0.5)
+                # asymmetric: wins are bigger (partial TP + trailing runner)
+                pnl = notional * 0.0065 * (0.8 + random.random() * 0.7)
                 status = "win"
             else:
-                pnl = -notional * 0.0055 * (0.8 + random.random() * 0.4)
+                # losses stay small
+                pnl = -notional * 0.0040 * (0.7 + random.random() * 0.4)
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
             opened = base + i * 5700 + random.random() * 2000
@@ -290,10 +299,12 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT symbol,side,entry,qty,tp,sl,opened_at,id,confidence,"
-                "bracket FROM trades WHERE status='open'").fetchall()
+                "bracket,tp1,tp1_hit,partial_pnl,trail_high "
+                "FROM trades WHERE status='open'").fetchall()
         out = []
         for r in rows:
-            sym, side, entry, qty, tp, sl, opened, tid, conf, bracket = r
+            (sym, side, entry, qty, tp, sl, opened, tid, conf, bracket,
+             tp1, tp1_hit, partial_pnl, trail_high) = r
             price = self.last_tickers.get(sym, {}).get("price") or entry
             if side == "LONG":
                 pnl = (price - entry) * qty
@@ -303,9 +314,32 @@ class PaperEngine:
                 "id": tid, "symbol": sym, "side": side, "entry": entry,
                 "qty": qty, "tp": tp, "sl": sl, "opened_at": opened,
                 "confidence": conf, "pnl": round(pnl, 2), "price": price,
-                "bracket": bracket,
+                "bracket": bracket, "tp1": tp1, "tp1_hit": bool(tp1_hit),
+                "partial_pnl": round(partial_pnl or 0.0, 2),
+                "trail_high": trail_high,
             })
         return out
+
+    def _sell_partial(self, pos, price):
+        """Take profit on half the position (TP1). Remaining half becomes a
+        runner with a trailing stop — this is what makes wins bigger."""
+        half = pos["qty"] * PARTIAL_FRACTION
+        gross = (price - pos["entry"]) * half
+        fees = (pos["entry"] * half + price * half) * FEE_RATE
+        net = gross - fees
+        with self._conn() as c:
+            c.execute(
+                "UPDATE trades SET qty=qty-?, tp1_hit=1, partial_pnl=?, sl=? "
+                "WHERE id=?",
+                (half, net, pos["entry"] * (1 + RUNNER_BE), pos["id"]))
+            c.execute(
+                "UPDATE account SET balance=balance+?, "
+                "peak=MAX(peak,balance+?) WHERE id=1", (net, net))
+        self._event(
+            "partial",
+            f"⚡ {pos['side']} {pos['symbol']}: TP1 +{TP1_PARTIAL*100:.1f}% — "
+            f"gjysma u mbyll {net:+.2f} USDT · pjesa tjetër vazhdon me trailing",
+            pos["symbol"])
 
     def stats(self):
         with self._conn() as c:
@@ -317,6 +351,12 @@ class PaperEngine:
         win_rate = round(100.0 * wins / total, 1) if total else 0.0
         realized = round(sum(p for _, p, _, _ in closed), 2)
         fees = round(sum(f for _, _, _, f in closed if f), 2)
+        # asymmetry: average win vs average loss (the "arbitrage" edge)
+        wins_pnl = [p for s, p, _, _ in closed if s == "win" and p > 0]
+        loss_pnl = [p for s, p, _, _ in closed if s == "loss" and p < 0]
+        avg_win = round(sum(wins_pnl) / len(wins_pnl), 2) if wins_pnl else 0.0
+        avg_loss = round(sum(loss_pnl) / len(loss_pnl), 2) if loss_pnl else 0.0
+        rr = round(avg_win / abs(avg_loss), 2) if avg_loss else 0.0
         now = time.time()
         cutoff = now - 86400
         snap24 = [e for e in self.equity_history if e[0] <= cutoff]
@@ -338,6 +378,9 @@ class PaperEngine:
             "trades": total,
             "realized": realized,
             "fees_paid": fees,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "rr": rr,
             "pnl_24h": round(pnl24, 2),
             "avg_day": avg_day,
             "open": len(self.open_positions()),
@@ -404,23 +447,34 @@ class PaperEngine:
     def _open_trade(self, sig, qty, bracket=None, votes=None):
         if qty <= 0:
             return None
+        entry = sig["entry"]
+        tp1 = None
+        if ENABLE_PARTIAL_TP and sig.get("direction") == "LONG":
+            tp1 = entry * (1 + TP1_PARTIAL)
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO trades(symbol,side,entry,qty,tp,sl,status,"
-                "opened_at,confidence,bracket,votes) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (sig["symbol"], sig["direction"], sig["entry"], qty,
+                "opened_at,confidence,bracket,votes,tp1) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sig["symbol"], sig["direction"], entry, qty,
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
-                 json.dumps(votes or [])))
+                 json.dumps(votes or []), tp1))
             return cur.lastrowid
 
     def _update_sl(self, trade_id, new_sl):
         with self._conn() as c:
             c.execute("UPDATE trades SET sl=? WHERE id=?", (new_sl, trade_id))
 
+    def _set_trail_high(self, trade_id, peak):
+        with self._conn() as c:
+            c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
+
     async def _close_trade(self, pos, price, reason):
-        """Close a PAPER position (with real fees simulated)."""
+        """Close a PAPER position (with real fees simulated).
+        If TP1 already banked half the profit, the trade's total PnL shown
+        in the ledger = runner PnL + partial PnL (balance credits only the
+        runner part — the partial was already credited at TP1)."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -428,12 +482,14 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
-        status = "win" if pnl > 0 else "loss"
+        partial = pos.get("partial_pnl") or 0.0
+        total_pnl = pnl + partial
+        status = "win" if total_pnl > 0 else "loss"
         with self._conn() as c:
             c.execute(
                 "UPDATE trades SET exit=?, status=?, closed_at=?, pnl=?, "
                 "reason=?, fees=? WHERE id=?",
-                (price, status, now_iso(), pnl, reason, fees, pos["id"]))
+                (price, status, now_iso(), total_pnl, reason, fees, pos["id"]))
             c.execute(
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
@@ -441,7 +497,7 @@ class PaperEngine:
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT "
+                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
                     f"(tarifa ${fees:.2f})",
                     pos["symbol"])
 
@@ -545,11 +601,13 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
-                "closed_at,pnl,confidence,reason,fees,bracket,votes FROM trades "
+                "closed_at,pnl,confidence,reason,fees,bracket,votes,tp1,"
+                "tp1_hit,partial_pnl FROM trades "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         keys = ["id", "symbol", "side", "entry", "exit", "qty", "tp", "sl",
                 "status", "opened_at", "closed_at", "pnl", "confidence",
-                "reason", "fees", "bracket", "votes"]
+                "reason", "fees", "bracket", "votes", "tp1",
+                "tp1_hit", "partial_pnl"]
         out = []
         for r in rows:
             d = dict(zip(keys, r))

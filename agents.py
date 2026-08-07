@@ -39,9 +39,11 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
-                    REAL_MAX_POSITIONS)
+                    REAL_MAX_POSITIONS,
+                    ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
+                    TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST)
 from providers import WATCHLIST
-from strategies import STRATEGIES, vol_ratio, rsi
+from strategies import STRATEGIES, vol_ratio, rsi, ema as strat_ema
 from learning import (aggregate_from_trades, meta_threshold,
                       system_win_rate, save_history,
                       DEFAULT_STATS, META_WINDOW, HISTORY_MAX)
@@ -187,6 +189,7 @@ class ConsensusAgent(Agent):
         e = self.engine
         weights = e.strategy_stats
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
+        rms = self._relative_strength(ctx)                # "arbitrage" across symbols
         candidates = []
 
         for sym, votes in ctx.votes.items():
@@ -210,11 +213,30 @@ class ConsensusAgent(Agent):
             if len(supporting) < 2:              # duhen ≥2 strategji bashkë
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
+            rms_note = ""
+            if REL_STRENGTH_BOOST and rms is not None and sym in rms:
+                s, rank = rms[sym]
+                # buy relative strength, avoid relative weakness
+                if direction == "LONG":
+                    if rank >= 0.5:
+                        confidence = min(94, confidence + 4)
+                        rms_note = f" · RMS {rank:.0%} (i fortë)"
+                    elif rank <= 0.2:
+                        confidence = max(45, confidence - 6)
+                        rms_note = f" · ⚠️ RMS {rank:.0%} (i dobët)"
+                else:
+                    if rank <= 0.5:
+                        confidence = min(94, confidence + 4)
+                        rms_note = f" · RMS {rank:.0%} (i dobët)"
+                    elif rank >= 0.8:
+                        confidence = max(45, confidence - 6)
+                        rms_note = f" · ⚠️ RMS {rank:.0%} (i fortë)"
             candidates.append({
                 "symbol": sym, "direction": direction,
                 "confidence": confidence, "score": score,
                 "supporting": supporting,
                 "n_votes": len(votes),
+                "rms_note": rms_note,
             })
 
         if not candidates:
@@ -230,9 +252,37 @@ class ConsensusAgent(Agent):
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
-            f"(net {best['score']:+.2f}, prag {threshold:.2f}) · mbështesin: "
+            f"(net {best['score']:+.2f}, prag {threshold:.2f})"
+            f"{best.get('rms_note', '')} · mbështesin: "
             f"{', '.join(best['supporting'][:4])}",
             best["symbol"], best["direction"], best["confidence"])
+
+    @staticmethod
+    def _relative_strength(ctx):
+        """Cross-symbol ranking (mini 'arbitrage'): long the strong, short
+        the weak. Returns {symbol: (score, percentile_rank)}."""
+        if not REL_STRENGTH_BOOST:
+            return None
+        scores = {}
+        for sym, klines in ctx.candles.items():
+            try:
+                closes = [c["c"] for c in klines]
+                if len(closes) < 12:
+                    continue
+                roc10 = (closes[-1] - closes[-11]) / closes[-11] * 100 if closes[-11] else 0
+                chg24 = (ctx.tickers.get(sym) or {}).get("chg24") or 0.0
+                e9 = strat_ema(closes, 9)[-1]
+                e21 = strat_ema(closes, 21)[-1]
+                trend = 1.0 if e9 > e21 else -1.0
+                scores[sym] = roc10 * 0.5 + chg24 * 0.3 + trend * 0.2
+            except Exception:
+                continue
+        if not scores:
+            return None
+        ordered = sorted(scores.items(), key=lambda kv: kv[1])
+        n = len(ordered)
+        return {sym: (sc, (i + 1) / n)
+                for i, (sym, sc) in enumerate(ordered)}
 
 
 # ======================================================================
@@ -521,31 +571,69 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
-            hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
-            hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
 
-            if not hit_tp and not hit_sl:
-                if side == "LONG" and price >= pos["entry"] * (1 + BREAKEVEN_AT):
-                    new_sl = pos["entry"] * 1.0005
+            if e.mode == "real":
+                await self._track_real(e, pos, price)
+                continue
+
+            if side != "LONG" or not ENABLE_PARTIAL_TP or not pos.get("tp1"):
+                # classic symmetric handling (SHORT or partial off)
+                await self._track_classic(e, pos, price)
+                continue
+
+            # ---------- ASYMMETRIC LONG: partial TP + trailing runner ----------
+            hit_sl = price <= pos["sl"]
+            if hit_sl:
+                await e._close_trade(pos, price, "sl")
+                continue
+
+            if not pos["tp1_hit"]:
+                if price >= pos["tp1"]:
+                    e._sell_partial(pos, price)           # bank half the profit
+                elif price >= pos["entry"] * (1 + BREAKEVEN_AT):
+                    new_sl = pos["entry"] * 1.0005        # early breakeven guard
                     if new_sl > pos["sl"]:
                         e._update_sl(pos["id"], new_sl)
-                elif side == "SHORT" and price <= pos["entry"] * (1 - BREAKEVEN_AT):
-                    new_sl = pos["entry"] * 0.9995
-                    if new_sl < pos["sl"]:
-                        e._update_sl(pos["id"], new_sl)
-
-            if hit_tp or hit_sl:
-                if e.mode == "real":
-                    await e.real_close(pos, price, "tp" if hit_tp else "sl")
-                else:
-                    await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+            else:
+                # runner: trail the stop below the highest price reached
+                peak = max(pos.get("trail_high") or price, price)
+                new_sl = peak * (1 - TRAIL_PCT)
+                if new_sl > pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+                    e._set_trail_high(pos["id"], peak)
+                if price <= pos["sl"]:
+                    await e._close_trade(pos, price, "trail")
 
         if positions:
             p = positions[0]
-            self.report(f"{len(positions)} pozicion(e) aktive — duke monitoruar TP/SL",
+            tag = " (asimetrik)" if (ENABLE_PARTIAL_TP and p["side"] == "LONG") else ""
+            self.report(f"{len(positions)} pozicion(e) aktive{tag} — TP1 + trailing",
                         p["symbol"], p["side"])
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
+
+    async def _track_classic(self, e, pos, price):
+        side = pos["side"]
+        hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
+        hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        if not hit_tp and not hit_sl:
+            if side == "LONG" and price >= pos["entry"] * (1 + BREAKEVEN_AT):
+                new_sl = pos["entry"] * 1.0005
+                if new_sl > pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+            elif side == "SHORT" and price <= pos["entry"] * (1 - BREAKEVEN_AT):
+                new_sl = pos["entry"] * 0.9995
+                if new_sl < pos["sl"]:
+                    e._update_sl(pos["id"], new_sl)
+        if hit_tp or hit_sl:
+            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+
+    async def _track_real(self, e, pos, price):
+        side = pos["side"]
+        hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
+        hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        if hit_tp or hit_sl:
+            await e.real_close(pos, price, "tp" if hit_tp else "sl")
 
 
 # ======================================================================
