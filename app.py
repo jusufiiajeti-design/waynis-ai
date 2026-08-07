@@ -3,7 +3,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 6                  # symbols scanned per cycle
+SCAN_BATCH = 8                  # symbols scanned per cycle
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
@@ -786,10 +786,12 @@ def clamp(v, lo, hi):
 
 
 def vol_ratio(vols):
-    if len(vols) < 21:
+    """Volume ratio of the last COMPLETED candle vs the previous 20.
+    (The final candle is still forming, so we skip it.)"""
+    if len(vols) < 23:
         return 1.0
-    avg = sum(vols[-21:-1]) / 20.0
-    return vols[-1] / avg if avg > 0 else 1.0
+    avg = sum(vols[-23:-2]) / 20.0
+    return vols[-2] / avg if avg > 0 else 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -1148,15 +1150,17 @@ class ConsensusAgent(Agent):
             if tw <= 0:
                 continue
             score = net / tw                     # -1 .. 1
-            if score > 0.12:
+            if score > 0.05:
                 direction = "LONG"
-            elif score < -0.12:
+            elif score < -0.05:
                 direction = "SHORT"
             else:
                 continue
-            confidence = min(94.0, 50.0 + abs(score) * 140.0)
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
+            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
+                continue
+            confidence = min(94.0, 50.0 + abs(score) * 150.0)
             candidates.append({
                 "symbol": sym, "direction": direction,
                 "confidence": confidence, "score": score,
@@ -1299,25 +1303,19 @@ class ValidatorAgent(Agent):
                 ctx.stop = True
                 return
 
-        # per-symbol volume check from candles
+        # per-symbol sanity checks (volume is handled by the strategies'
+        # own filters; consensus ≥2 strategies is the main quality gate)
         klines = ctx.candles.get(best["symbol"])
-        if klines:
-            vols = [c["v"] for c in klines]
-            vr = vol_ratio(vols)
+        if klines and len(klines) >= 2:
             closes = [c["c"] for c in klines]
             r = rsi(closes)
-            if vr < 1.02:
-                self.report(f"{best['symbol']}: volumi i ulët — setup i hedhur",
-                            best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
-                return
-            if r > 80 or r < 20:
+            if r > 85 or r < 15:
                 self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
             mom = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] else 0
-            if abs(mom) > 0.004:
+            if abs(mom) > 0.008:
                 self.report(f"{best['symbol']}: lëvizje shumë e shpejtë — anashkalohet",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
@@ -1680,7 +1678,7 @@ class PaperEngine:
                 symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL,
                 tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT,
                 pnl REAL, confidence REAL, reason TEXT,
-                fees REAL, bracket TEXT)""")
+                fees REAL, bracket TEXT, votes TEXT)""")
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
@@ -2104,11 +2102,11 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
-                "closed_at,pnl,confidence,reason,fees,bracket FROM trades "
+                "closed_at,pnl,confidence,reason,fees,bracket,votes FROM trades "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         keys = ["id", "symbol", "side", "entry", "exit", "qty", "tp", "sl",
                 "status", "opened_at", "closed_at", "pnl", "confidence",
-                "reason", "fees", "bracket"]
+                "reason", "fees", "bracket", "votes"]
         out = []
         for r in rows:
             d = dict(zip(keys, r))

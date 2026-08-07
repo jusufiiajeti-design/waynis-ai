@@ -195,15 +195,17 @@ class ConsensusAgent(Agent):
             if tw <= 0:
                 continue
             score = net / tw                     # -1 .. 1
-            if score > 0.12:
+            if score > 0.05:
                 direction = "LONG"
-            elif score < -0.12:
+            elif score < -0.05:
                 direction = "SHORT"
             else:
                 continue
-            confidence = min(94.0, 50.0 + abs(score) * 140.0)
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
+            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
+                continue
+            confidence = min(94.0, 50.0 + abs(score) * 150.0)
             candidates.append({
                 "symbol": sym, "direction": direction,
                 "confidence": confidence, "score": score,
@@ -346,25 +348,19 @@ class ValidatorAgent(Agent):
                 ctx.stop = True
                 return
 
-        # per-symbol volume check from candles
+        # per-symbol sanity checks (volume is handled by the strategies'
+        # own filters; consensus ≥2 strategies is the main quality gate)
         klines = ctx.candles.get(best["symbol"])
-        if klines:
-            vols = [c["v"] for c in klines]
-            vr = vol_ratio(vols)
+        if klines and len(klines) >= 2:
             closes = [c["c"] for c in klines]
             r = rsi(closes)
-            if vr < 1.02:
-                self.report(f"{best['symbol']}: volumi i ulët — setup i hedhur",
-                            best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
-                return
-            if r > 80 or r < 20:
+            if r > 85 or r < 15:
                 self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
             mom = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] else 0
-            if abs(mom) > 0.004:
+            if abs(mom) > 0.008:
                 self.report(f"{best['symbol']}: lëvizje shumë e shpejtë — anashkalohet",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True

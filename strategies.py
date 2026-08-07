@@ -109,10 +109,12 @@ def clamp(v, lo, hi):
 
 
 def vol_ratio(vols):
-    if len(vols) < 21:
+    """Volume ratio of the last COMPLETED candle vs the previous 20.
+    (The final candle is still forming, so we skip it.)"""
+    if len(vols) < 23:
         return 1.0
-    avg = sum(vols[-21:-1]) / 20.0
-    return vols[-1] / avg if avg > 0 else 1.0
+    avg = sum(vols[-23:-2]) / 20.0
+    return vols[-2] / avg if avg > 0 else 1.0
 
 
 # ---------------------------------------------------------------------------

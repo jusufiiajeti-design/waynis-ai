@@ -117,7 +117,7 @@ class PaperEngine:
                 symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL,
                 tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT,
                 pnl REAL, confidence REAL, reason TEXT,
-                fees REAL, bracket TEXT)""")
+                fees REAL, bracket TEXT, votes TEXT)""")
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
@@ -541,11 +541,11 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
-                "closed_at,pnl,confidence,reason,fees,bracket FROM trades "
+                "closed_at,pnl,confidence,reason,fees,bracket,votes FROM trades "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         keys = ["id", "symbol", "side", "entry", "exit", "qty", "tp", "sl",
                 "status", "opened_at", "closed_at", "pnl", "confidence",
-                "reason", "fees", "bracket"]
+                "reason", "fees", "bracket", "votes"]
         out = []
         for r in rows:
             d = dict(zip(keys, r))

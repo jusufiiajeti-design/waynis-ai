@@ -2,7 +2,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 6                  # symbols scanned per cycle
+SCAN_BATCH = 8                  # symbols scanned per cycle
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
