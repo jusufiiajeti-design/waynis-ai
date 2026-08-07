@@ -20,12 +20,13 @@ REAL_TP = 0.0045                # +0.45%
 REAL_SL = 0.0035                # -0.35%
 
 # ---- asymmetric payoff: wins > losses ("arbitrage-like" edge) ----
-ENABLE_PARTIAL_TP = True        # partial take-profit + trailing runner (paper)
+# NOTE: disabled by request — the bot uses classic symmetric TP/SL.
+ENABLE_PARTIAL_TP = False       # partial take-profit + trailing runner (paper)
 TP1_PARTIAL = 0.005             # take half of the position at +0.5%
 PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
-REL_STRENGTH_BOOST = True       # cross-symbol relative-strength filter
+REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
 
 
 # ============ providers.py ============
@@ -2029,12 +2030,10 @@ class PaperEngine:
             notional = 1200 + random.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                # asymmetric: wins are bigger (partial TP + trailing runner)
-                pnl = notional * 0.0065 * (0.8 + random.random() * 0.7)
+                pnl = notional * 0.0026 * (0.8 + random.random() * 0.5)
                 status = "win"
             else:
-                # losses stay small
-                pnl = -notional * 0.0040 * (0.7 + random.random() * 0.4)
+                pnl = -notional * 0.0055 * (0.8 + random.random() * 0.4)
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
             opened = base + i * 5700 + random.random() * 2000

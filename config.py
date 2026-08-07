@@ -19,9 +19,10 @@ REAL_TP = 0.0045                # +0.45%
 REAL_SL = 0.0035                # -0.35%
 
 # ---- asymmetric payoff: wins > losses ("arbitrage-like" edge) ----
-ENABLE_PARTIAL_TP = True        # partial take-profit + trailing runner (paper)
+# NOTE: disabled by request — the bot uses classic symmetric TP/SL.
+ENABLE_PARTIAL_TP = False       # partial take-profit + trailing runner (paper)
 TP1_PARTIAL = 0.005             # take half of the position at +0.5%
 PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
-REL_STRENGTH_BOOST = True       # cross-symbol relative-strength filter
+REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
