@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="sq">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a0e14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Waynis AI — Paper Trading</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<style>
+  :root{
+    --bg:#0a0e14; --card:#121a28; --card2:#0f1622; --line:#1e2a3d;
+    --txt:#e6edf3; --mut:#8b98ab; --dim:#5b6b80;
+    --green:#22c55e; --green2:#16a34a; --red:#ef4444; --blue:#38bdf8;
+    --amber:#fbbf24; --purple:#a78bfa;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  body{padding-bottom:76px;overflow-x:hidden}
+  .wrap{max-width:480px;margin:0 auto;padding:0 12px}
+
+  /* ---------- header ---------- */
+  header{position:sticky;top:0;z-index:30;background:rgba(10,14,20,.92);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .hdr{max-width:480px;margin:0 auto;display:flex;align-items:center;
+    justify-content:space-between;padding:12px 16px}
+  .brand{display:flex;align-items:center;gap:9px}
+  .logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(135deg,#16a34a,#0ea5e9);font-weight:800;font-size:17px;
+    box-shadow:0 0 18px rgba(34,197,94,.35)}
+  .brand b{font-size:15px;letter-spacing:.3px}
+  .brand small{display:block;color:var(--mut);font-size:10.5px;font-weight:400}
+  .live{display:flex;align-items:center;gap:5px;background:rgba(34,197,94,.12);
+    color:var(--green);border:1px solid rgba(34,197,94,.35);padding:4px 10px;
+    border-radius:99px;font-size:11px;font-weight:700}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
+    animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.5)}
+    50%{opacity:.6;box-shadow:0 0 0 5px rgba(34,197,94,0)}}
+
+  /* ---------- cards ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:14px;margin:12px 0}
+  .card h3{font-size:12.5px;color:var(--mut);text-transform:uppercase;
+    letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+
+  /* ---------- hero ---------- */
+  .hero{position:relative;overflow:hidden;border-radius:18px;margin-top:14px;
+    background:linear-gradient(140deg,#0f2b1c 0%,#0d1a2e 55%,#101828 100%);
+    border:1px solid rgba(34,197,94,.3);padding:18px 16px}
+  .hero .glow{position:absolute;width:220px;height:220px;right:-70px;top:-90px;
+    background:radial-gradient(circle,rgba(34,197,94,.28),transparent 70%);
+    pointer-events:none}
+  .hero .tag{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;
+    color:var(--green);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);
+    padding:3px 9px;border-radius:99px;margin-bottom:10px;font-weight:700;letter-spacing:.4px}
+  .hero .made{font-size:34px;font-weight:800;letter-spacing:-.5px}
+  .hero .made .cur{font-size:20px;color:var(--green)}
+  .hero .made small{font-size:12px;color:var(--mut);font-weight:500;letter-spacing:0}
+  .hero .sub{margin-top:4px;font-size:12.5px;color:var(--mut)}
+  .hero .sub b{color:var(--green)}
+
+  /* ---------- stats ---------- */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+  .stat .l{font-size:11px;color:var(--mut);margin-bottom:4px}
+  .stat .v{font-size:19px;font-weight:750}
+  .stat .s{font-size:10.5px;color:var(--dim);margin-top:2px}
+  .up{color:var(--green)} .dn{color:var(--red)} .bl{color:var(--blue)}
+
+  /* ---------- chart ---------- */
+  .chart-head{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .chip{padding:6px 12px;border-radius:99px;background:var(--card2);
+    border:1px solid var(--line);color:var(--mut);font-size:12px;font-weight:600;
+    cursor:pointer;user-select:none;transition:.15s}
+  .chip.on{background:var(--green);border-color:var(--green);color:#04120a}
+  .tf{font-size:11px;padding:5px 10px}
+  canvas{width:100%;height:270px;display:block;border-radius:10px;background:#0c111b}
+  .chart-foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);margin-top:6px}
+
+  /* ---------- pipeline ---------- */
+  .pipe{display:flex;align-items:stretch;gap:4px;margin:6px 0 12px}
+  .pstep{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;
+    padding:8px 2px;border-radius:12px;border:1px solid var(--line);
+    background:var(--card2);position:relative;transition:.3s}
+  .pstep .ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    font-size:14px;background:#1a2436;color:var(--dim);transition:.3s}
+  .pstep .nm{font-size:9.5px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+  .pstep.done{border-color:rgba(34,197,94,.5)}
+  .pstep.done .ic{background:rgba(34,197,94,.15);color:var(--green)}
+  .pstep.done .nm{color:var(--green)}
+  .pstep.active{border-color:var(--green);box-shadow:0 0 16px rgba(34,197,94,.25);animation:stepPulse 1.6s infinite}
+  .pstep.active .ic{background:var(--green);color:#04120a}
+  .pstep.active .nm{color:var(--green)}
+  @keyframes stepPulse{0%,100%{box-shadow:0 0 12px rgba(34,197,94,.2)}
+    50%{box-shadow:0 0 22px rgba(34,197,94,.45)}}
+  .pipe-msg{font-size:12.5px;color:var(--mut);line-height:1.5;min-height:38px}
+  .agents-line{font-size:11px;color:var(--dim);background:rgba(167,139,250,.08);
+    border:1px dashed rgba(167,139,250,.35);border-radius:10px;padding:8px 10px;
+    margin:-2px 0 10px;line-height:1.6}
+  .ai-box{margin-top:10px;border:1px solid rgba(56,189,248,.35);border-radius:12px;
+    background:rgba(56,189,248,.06);cursor:pointer;overflow:hidden}
+  .ai-head{display:flex;align-items:center;gap:8px;padding:10px 12px;font-size:12.5px;
+    font-weight:700;color:var(--blue)}
+  .ai-model{margin-left:auto;font-size:10px;color:var(--dim);font-weight:600;
+    background:rgba(56,189,248,.12);padding:2px 8px;border-radius:99px;max-width:55%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ai-caret{font-size:11px;color:var(--dim)}
+  .ai-body{display:block;padding:0 12px 12px;font-size:12px;color:var(--mut)}
+  .ai-body.collapsed{display:none}
+  .ai-verdict{display:inline-block;font-size:11px;font-weight:800;padding:3px 10px;
+    border-radius:99px;margin-bottom:7px;letter-spacing:.5px}
+  .ai-verdict.v-LONG{background:rgba(34,197,94,.15);color:var(--green)}
+  .ai-verdict.v-SHORT{background:rgba(239,68,68,.15);color:var(--red)}
+  .ai-verdict.v-HOLD{background:rgba(139,152,171,.15);color:var(--mut)}
+  .ai-reason{line-height:1.55}
+  .ai-meta{margin-top:7px;font-size:10px;color:var(--dim)}
+  .ai-thinking{animation:thinkPulse 1.4s infinite;color:var(--blue)}
+  @keyframes thinkPulse{0%,100%{opacity:.45}50%{opacity:1}}
+  .conf-bar{height:6px;border-radius:99px;background:#1a2436;margin:8px 0 2px;overflow:hidden}
+  .conf-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#16a34a,#22c55e,#4ade80);
+    transition:width .6s}
+  .pipe-actions{display:flex;gap:8px;margin-top:10px}
+  .btn{flex:1;border:none;border-radius:12px;padding:12px;font-size:13.5px;font-weight:700;
+    cursor:pointer;transition:.15s}
+  .btn:active{transform:scale(.97)}
+  .btn-green{background:linear-gradient(135deg,#16a34a,#22c55e);color:#04120a}
+  .btn-green:disabled{opacity:.5}
+  .btn-ghost{background:var(--card2);color:var(--mut);border:1px solid var(--line)}
+
+  /* ---------- feed ---------- */
+  .row{display:flex;align-items:center;justify-content:space-between;padding:10px 2px;
+    border-bottom:1px solid rgba(30,42,61,.55)}
+  .row:last-child{border-bottom:none}
+  .sym{font-weight:700;font-size:13px}
+  .sym small{display:block;color:var(--dim);font-weight:500;font-size:10px}
+  .px{text-align:right;font-size:13px;font-weight:600}
+  .px small{display:block;color:var(--dim);font-weight:500;font-size:10px}
+  .ev{display:flex;gap:10px;padding:9px 2px;border-bottom:1px solid rgba(30,42,61,.5);font-size:12.5px}
+  .ev:last-child{border-bottom:none}
+  .ev .t{color:var(--dim);font-size:10.5px;white-space:nowrap;padding-top:1px}
+  .ev .m{color:var(--mut);line-height:1.45}
+  .badge{font-size:9px;font-weight:800;padding:2px 7px;border-radius:99px;letter-spacing:.5px}
+  .b-open{background:rgba(56,189,248,.15);color:var(--blue)}
+  .b-win{background:rgba(34,197,94,.15);color:var(--green)}
+  .b-loss{background:rgba(239,68,68,.15);color:var(--red)}
+  .sec-t{font-size:12.5px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;
+    margin:16px 0 4px;display:flex;align-items:center;gap:7px}
+
+  /* ---------- trades ---------- */
+  .tradesum{display:flex;gap:8px;margin-bottom:10px}
+  .tsum{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+    padding:8px;text-align:center}
+  .tsum .n{font-size:16px;font-weight:750}
+  .tsum .l{font-size:9.5px;color:var(--dim)}
+  .trade{border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin-bottom:8px;
+    background:var(--card2)}
+  .t-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+  .t-sym{font-weight:750;font-size:13.5px}
+  .t-side{font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px}
+  .side-LONG{background:rgba(34,197,94,.15);color:var(--green)}
+  .side-SHORT{background:rgba(239,68,68,.15);color:var(--red)}
+  .t-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10.5px;color:var(--dim)}
+  .t-grid b{display:block;color:var(--txt);font-size:11.5px;margin-top:1px;font-weight:650}
+  .t-pnl{text-align:right}
+  .t-pnl b{font-size:14px}
+
+  /* ---------- settings ---------- */
+  .set{display:flex;align-items:center;justify-content:space-between;padding:13px 2px;
+    border-bottom:1px solid rgba(30,42,61,.55)}
+  .set:last-child{border-bottom:none}
+  .set .l{font-size:13.5px;font-weight:600}
+  .set .d{font-size:11px;color:var(--dim);margin-top:2px}
+  .switch{width:46px;height:26px;border-radius:99px;background:#1a2436;position:relative;
+    cursor:pointer;transition:.2s;border:1px solid var(--line);flex-shrink:0}
+  .switch.on{background:var(--green)}
+  .switch::after{content:"";position:absolute;width:20px;height:20px;border-radius:50%;
+    background:#fff;top:2px;left:2px;transition:.2s}
+  .switch.on::after{left:22px}
+  .kbd{font-size:11px;color:var(--dim)}
+  .sel,.inp{background:var(--card2);border:1px solid var(--line);color:var(--txt);
+    border-radius:9px;padding:7px 10px;font-size:12px;max-width:56%;font-family:inherit}
+  .sel{max-width:52%}
+  .inp:focus,.sel:focus{outline:none;border-color:var(--blue)}
+  .ai-state{margin:6px 0 4px;font-size:11px;color:var(--dim);line-height:1.5}
+
+  /* ---------- tabs ---------- */
+  .tab{display:none}
+  .tab.on{display:block;animation:fade .25s}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+
+  nav{position:fixed;bottom:0;left:0;right:0;z-index:40;
+    background:rgba(10,14,20,.96);backdrop-filter:blur(12px);
+    border-top:1px solid var(--line)}
+  .nav{max-width:480px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
+  .ni{display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 0 12px;
+    color:var(--dim);font-size:9.5px;font-weight:700;cursor:pointer;transition:.15s}
+  .ni svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .ni.on{color:var(--green)}
+
+  /* toast */
+  #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:88px;z-index:60;
+    background:#101a2b;border:1px solid var(--line);color:var(--txt);
+    padding:10px 16px;border-radius:12px;font-size:12.5px;max-width:88%;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+    transition:.25s;text-align:center}
+  #toast.show{opacity:1}
+
+  .empty{color:var(--dim);font-size:12.5px;text-align:center;padding:22px 10px}
+  .foot-note{text-align:center;color:var(--dim);font-size:10.5px;padding:18px 10px 6px;line-height:1.6}
+  .num-err{color:var(--red)}
+  ::-webkit-scrollbar{width:0;height:0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hdr">
+    <div class="brand">
+      <div class="logo">⚡</div>
+      <div><b>Waynis AI</b><small>Paper Trading · 6-Cycle Pipeline</small></div>
+    </div>
+    <div class="live"><span class="dot"></span><span id="liveTxt">LIVE</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ HOME ============ -->
+  <section class="tab on" id="tab-home">
+    <div class="hero">
+      <div class="glow"></div>
+      <div class="tag">⚡ AI TRADING ENGINE · PAPER MODE</div>
+      <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span><br>
+        <small>të fituara që nga fillimi</small></div>
+      <div class="sub">Sot: <b id="todayVal">+0.00 USDT</b> · Equity: <span id="eqVal">—</span></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="l">PnL 24h</div>
+        <div class="v" id="pnl24">—</div><div class="s">fitim/humbje 24 orë</div></div>
+      <div class="stat"><div class="l">Win Rate</div>
+        <div class="v" id="winrate">—</div><div class="s" id="winLbl">— tregti të mbyllura</div></div>
+      <div class="stat"><div class="l">Mesatarisht / ditë</div>
+        <div class="v" id="avgday">—</div><div class="s">bazuar në PnL real</div></div>
+      <div class="stat"><div class="l">Pozicione të hapura</div>
+        <div class="v bl" id="openPos">0</div><div class="s">maks 4 njëkohësisht</div></div>
+    </div>
+
+    <div class="card">
+      <h3>📈 Tregu i drejtpërdrejtë</h3>
+      <div class="chart-head" id="symChips"></div>
+      <canvas id="chart"></canvas>
+      <div class="chart-foot"><span id="chartRange">—</span><span id="chartLast">—</span></div>
+      <div class="chart-head" style="margin-top:8px;justify-content:center" id="tfChips"></div>
+    </div>
+
+    <div class="card">
+      <h3>⚙️ 6-Cycle Execution Pipeline</h3>
+      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar agjentët…</div>
+      <div class="pipe" id="pipeSteps"></div>
+      <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
+      <div class="conf-bar"><div class="conf-fill" id="confFill" style="width:0%"></div></div>
+      <div class="ai-box" id="aiBox" onclick="toggleAiDetail()">
+        <div class="ai-head">
+          <span>🧠 AI Reasoning</span>
+          <span class="ai-model" id="aiModel">—</span>
+          <span class="ai-caret" id="aiCaret">▾</span>
+        </div>
+        <div class="ai-body" id="aiBody">
+          <div class="ai-verdict" id="aiVerdict">—</div>
+          <div class="ai-reason" id="aiReason">Truri AI po mblidh kontekstin e tregut…</div>
+          <div class="ai-meta" id="aiMeta"></div>
+        </div>
+      </div>
+      <div class="pipe-actions">
+        <button class="btn btn-green" id="btnCycle">▶ Validoni ciklin tani</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEED ============ -->
+  <section class="tab" id="tab-feed">
+    <div class="sec-t">● Live Spot Feed — <span id="feedCount">0</span> monedha</div>
+    <div class="card" style="padding:6px 12px" id="tickerList"></div>
+    <div class="sec-t">⚡ Ngjarjet e botit</div>
+    <div class="card" style="padding:6px 12px" id="eventList"></div>
+  </section>
+
+  <!-- ============ TRADES ============ -->
+  <section class="tab" id="tab-trades">
+    <div class="sec-t">📈 Kurba e equity — efekti komponues</div>
+    <div class="card" style="padding:12px">
+      <canvas id="eqChart"></canvas>
+      <div class="chart-foot"><span>24 orët e fundit (historia live)</span><span id="eqGrowth">—</span></div>
+    </div>
+    <div class="sec-t">📊 Performanca</div>
+    <div class="tradesum">
+      <div class="tsum"><div class="n up" id="tWin">0</div><div class="l">Fitore</div></div>
+      <div class="tsum"><div class="n dn" id="tLoss">0</div><div class="l">Humbje</div></div>
+      <div class="tsum"><div class="n" id="tRate">0%</div><div class="l">Win rate</div></div>
+      <div class="tsum"><div class="n up" id="tNet">+0.00</div><div class="l">PnL neto</div></div>
+    </div>
+    <div class="sec-t">🧾 Historiku i tregtive</div>
+    <div id="tradeList"></div>
+    <button class="btn btn-ghost" id="btnReset" style="width:100%;margin-top:10px">↺ Rivendos llogarinë demo</button>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="tab" id="tab-settings">
+    <div class="sec-t">⚙️ Kontrolli i botit</div>
+    <div class="card" style="padding:4px 12px">
+      <div class="set">
+        <div><div class="l">Auto-trading</div><div class="d">Boti ekzekuton vetë ciklet 6-Cycle</div></div>
+        <div class="switch on" id="swAuto" onclick="toggleAuto()"></div>
+      </div>
+      <div class="set">
+        <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
+        <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
+      </div>
+      <div class="set">
+        <div><div class="l">Cikli i botit</div><div class="d">6 agjentë + koordinator, çdo <b id="cycleSec">4</b> sekonda</div></div>
+        <div class="kbd">LIVE</div>
+      </div>
+      <div class="set">
+        <div><div class="l">Strategjia</div><div class="d">EMA 9/21 + RSI 14 + konfirmim volumi</div></div>
+        <div class="kbd">1m TF</div>
+      </div>
+      <div class="set">
+        <div><div class="l">Menaxhimi i rrezikut</div><div class="d">Risk 0.75% / tregti · TP +0.45% · SL −0.35%</div></div>
+        <div class="kbd" id="modeKbd">KOMPONIM</div>
+      </div>
+    </div>
+    <div class="sec-t">🧠 AI Logjika</div>
+    <div class="card" style="padding:4px 12px">
+      <div class="set">
+        <div><div class="l">AI Reasoning</div><div class="d">Agjentët këshillohen nga truri AI përpara ekzekutimit</div></div>
+        <div class="switch on" id="swAI" onclick="toggleAI()"></div>
+      </div>
+      <div class="set">
+        <div><div class="l">Provider-i</div><div class="d">Ku punon LLM-ja</div></div>
+        <select id="aiProvider" class="sel" onchange="onProviderChange()">
+          <option value="auto">⚡ Auto (Ollama → Pollinations)</option>
+          <option value="ollama">🤖 Ollama (lokal, falas)</option>
+          <option value="pollinations">☁️ Pollinations (cloud, falas)</option>
+          <option value="openai">🔑 OpenAI-compatible (çelësi yt)</option>
+        </select>
+      </div>
+      <div class="set">
+        <div><div class="l">Modeli lokal (Ollama)</div><div class="d">p.sh. qwen2.5:0.5b · llama3.2:1b</div></div>
+        <input class="inp" id="aiModelInp" placeholder="qwen2.5:0.5b">
+      </div>
+      <div class="set">
+        <div><div class="l">Modeli cloud / API</div><div class="d">p.sh. gpt-4o-mini · llama-3.3-70b</div></div>
+        <input class="inp" id="aiOpenaiModelInp" placeholder="gpt-4o-mini">
+      </div>
+      <div class="set">
+        <div><div class="l">Base URL</div><div class="d">OpenAI / Groq / OpenRouter / Ollama</div></div>
+        <input class="inp" id="aiBaseUrlInp" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="set">
+        <div><div class="l">API Key</div><div class="d">lihet bosh për providerët falas</div></div>
+        <input class="inp" id="aiKeyInp" type="password" placeholder="sk-...">
+      </div>
+      <button class="btn btn-green" id="btnSaveAI" style="width:100%;margin:10px 0 4px" onclick="saveAI()">💾 Ruaj cilësimet e AI</button>
+      <div class="ai-state" id="aiStateLine">—</div>
+    </div>
+
+    <div class="sec-t">☁️ Deploy 24/7 (Render)</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
+        Kjo faqe vjen nga një server që fiket herë pas here. Për ta pasur
+        <b>gjithmonë të ndezur</b>, shkarko kodin, ngarkoje në GitHub (falas)
+        dhe lidhe me Render — ke llogari tashmë! 🎉
+      </p>
+      <a class="btn btn-green" href="/code.zip" style="display:block;text-align:center;text-decoration:none"
+         download>📦 Shkarko kodin (WaynisAI-Kodi.zip)</a>
+      <p style="font-size:10.5px;color:var(--dim);margin-top:8px;line-height:1.55">
+        1. Zhzippe ZIP-in → do të kesh 14 skedarë.<br>
+        2. <b>github.com</b> (në Chrome, "Desktop site") → <b>New repository</b>
+        → emër: <b>waynis-ai</b> → Public → Create.<br>
+        3. <b>uploading an existing file</b> → zgjidh të gjithë skedarët →
+        Commit.<br>
+        4. <b>render.com</b> → <b>New → Web Service</b> → lidh GitHub →
+        zgjidh repon → Deploy.<br>
+        5. Pas ~3 min: <b>https://waynis-ai.onrender.com</b> → hap në telefon
+        → ⋮ → <b>Add to Home screen</b>. ✅ Përgjithmonë!
+      </p>
+    </div>
+
+    <div class="sec-t">📲 App Android</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
+        Shkarko <b>WaynisAI.apk</b> direkt në këtë telefon — ky shkarkim
+        vjen drejtpërdrejt nga serveri (pa dëmtime), ndryshe nga shkarkimi
+        nga viewer-i i skedarëve.
+      </p>
+      <a class="btn btn-green" href="/apk" style="display:block;text-align:center;text-decoration:none"
+         download>📲 Shkarko WaynisAI.apk</a>
+      <a class="btn btn-ghost" href="/apk.zip" style="display:block;text-align:center;text-decoration:none;margin-top:8px"
+         download>📦 Shkarko si ZIP (WaynisAI-Instalo.zip)</a>
+      <p style="font-size:10.5px;color:var(--dim);margin-top:8px;line-height:1.5">
+        Nëse <b>APK</b> të jep "App not installed", shkarko <b>ZIP</b> →
+        hape me menaxherin e skedarëve → <b>zhzippe</b> → instalo
+        <b>WaynisAI.apk</b> nga brenda. Madhësia e APK-së: 37 834 bajt.
+      </p>
+    </div>
+
+    <div class="sec-t">💳 Llogaria demo</div>
+    <div class="card" style="padding:4px 12px">
+      <div class="set">
+        <div><div class="l">Bilanci fillestar</div><div class="d" id="balStart">10,000 USDT</div></div>
+        <div class="kbd">PAPER</div>
+      </div>
+      <div class="set">
+        <div><div class="l">Bilanci aktual</div><div class="d" id="balNow">—</div></div>
+        <div class="kbd">REAL TË DHËNA</div>
+      </div>
+      <div class="set">
+        <div><div class="l">Faktori i komponimit</div><div class="d">Rritja e equity nga fillimi</div></div>
+        <div class="kbd up" id="growthKbd">1.00x</div>
+      </div>
+    </div>
+    <div class="sec-t">ℹ️ Rreth këtij boti</div>
+    <div class="card" style="font-size:12px;color:var(--mut);line-height:1.7">
+      <b style="color:var(--txt)">Waynis AI</b> është një bot <b>paper trading</b>: çmimet janë
+      <b>reale</b> nga exchange (OKX/Coinbase), por tregtitë janë të simuluara — pa para reale.
+      Strategjia 6-Cycle: Scan → Predict → Validate → Size → Fill → Track.
+      <br><br>⚠️ Ky është demo edukative. Tregtimi i kriptomonedhave mbart rrezik të lartë.
+    </div>
+    <div class="foot-note">Waynis AI · Paper Trading Engine<br>Ndërtuar me çmime reale të tregut</div>
+  </section>
+
+</div>
+
+<!-- bottom nav -->
+<nav>
+  <div class="nav">
+    <div class="ni on" data-tab="home">
+      <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/></svg>
+      Kryefaqe
+    </div>
+    <div class="ni" data-tab="feed">
+      <svg viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></svg>
+      Feed
+    </div>
+    <div class="ni" data-tab="trades">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M8 4v5"/><path d="M16 4v5"/><path d="m9 15 2 2 4-4"/></svg>
+      Tregti
+    </div>
+    <div class="ni" data-tab="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+      Cilësimet
+    </div>
+  </div>
+</nav>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= state ================= */
+const S = {
+  status:null, tickers:[], candles:[], trades:[], events:[],
+  symbol:"BTC-USDT", interval:"1m", tab:"home", lastCycleMsg:""
+};
+const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT"];
+const TFS = ["1m","5m","15m","1h","4h","1d"];
+const $ = id => document.getElementById(id);
+
+/* ================= helpers ================= */
+const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtPrice = p => p==null? "—" : Number(p).toLocaleString("en-US",{maximumFractionDigits: p>=1000?2 : p>=1?4 : 8});
+const fmtTime = iso => { try{ return new Date(iso).toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } };
+const sign = n => n>0?"+":"";
+function toast(msg,ms=3200){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),ms); }
+
+/* ================= data fetching ================= */
+async function jf(url,opts){ const r = await fetch(url,opts); if(!r.ok) throw new Error(url+" "+r.status); return r.json(); }
+async function refreshStatus(){
+  try{ S.status = await jf("/api/status"); renderStatus(); }
+  catch(e){ /* offline */ }
+}
+async function refreshTickers(){
+  try{ const d = await jf("/api/tickers"); S.tickers = d.tickers; renderTickers(); }
+  catch(e){}
+}
+async function refreshKlines(){
+  try{ const d = await jf(`/api/klines?symbol=${S.symbol}&interval=${S.interval}&limit=160`); S.candles=d.candles; drawChart(); }
+  catch(e){}
+}
+async function refreshTrades(){
+  try{ const d = await jf("/api/trades?limit=60"); S.trades=d.trades; renderTrades(); }
+  catch(e){}
+}
+async function refreshEvents(){
+  try{ const d = await jf("/api/events?limit=40"); S.events=d.events; renderEvents(); }
+  catch(e){}
+}
+
+/* ================= render: home ================= */
+function renderStatus(){
+  if(!S.status) return;
+  const a=S.status.account, st=S.status.stats, pp=S.status.pipeline;
+  // "made" = total profit since start (realized + any unrealized profit)
+  $("madeVal").textContent = fmt(Math.max(0, st.realized + Math.max(0,a.unrealized)));
+  $("todayVal").textContent = sign(st.pnl_24h)+fmt(st.pnl_24h)+" USDT";
+  $("todayVal").className = st.pnl_24h>=0?"up":"dn";
+  $("eqVal").textContent = fmt(a.equity)+" USDT";
+  const p=st.pnl_24h;
+  const e=$("pnl24"); e.textContent = sign(p)+fmt(p)+" USDT"; e.className="v "+(p>=0?"up":"dn");
+  $("winrate").textContent = fmt(st.win_rate,1)+"%";
+  $("winLbl").textContent = `${st.wins}W / ${st.losses}L`;
+  $("avgday").textContent = sign(st.avg_day)+fmt(st.avg_day)+" USDT";
+  $("openPos").textContent = st.open;
+  $("cycleSec").textContent = S.status.cycle_seconds;
+  $("balStart").textContent = fmt(10000)+" USDT";
+  $("balNow").textContent = fmt(a.balance)+" USDT";
+  $("tWin").textContent=st.wins; $("tLoss").textContent=st.losses;
+  $("tRate").textContent=fmt(st.win_rate,1)+"%";
+  const net=$("tNet"); net.textContent=sign(st.realized)+fmt(st.realized); net.className="n "+(st.realized>=0?"up":"dn");
+  // compound state
+  const sw=$("swCompound");
+  sw.classList.toggle("on", !!S.status.compound);
+  $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
+  const g=a.growth||1;
+  const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
+  renderPipeline(pp);
+  renderAgentsLine(S.status.agents);
+  renderAIBox(S.status);
+}
+
+/* ================= pipeline ================= */
+const PIPE_AGENTS=[["📡","Scanner"],["🎯","Predictor"],["✅","Validator"],["⚖️","Sizer"],["⚡","Filler"],["📊","Tracker"]];
+function renderPipeline(pp){
+  const box=$("pipeSteps");
+  const activeIdx = Math.min(pp.step, 5);
+  let html="";
+  PIPE_AGENTS.forEach((a,i)=>{
+    const cls = i<activeIdx?"done":(i===activeIdx?"active":"");
+    html+=`<div class="pstep ${cls}"><div class="ic">${a[0]}</div><div class="nm">${a[1]}</div></div>`;
+  });
+  box.innerHTML=html;
+  $("pipeMsg").textContent = `${pp.agent_icon||""} ${pp.step_name||""}: ${pp.message||""}`;
+  const conf = pp.confidence||0;
+  $("confFill").style.width = conf+"%";
+  if(pp.message !== S.lastCycleMsg){ S.lastCycleMsg=pp.message; }
+}
+function renderAgentsLine(agents){
+  if(!agents) return;
+  $("agentsLine").innerHTML = "🤖 Kontrollohet nga <b>6 agjentë</b> + koordinator: " +
+    agents.map(a=>a.icon+" "+a.name).join(" · ");
+}
+
+/* ================= AI reasoning panel ================= */
+let aiDetailOpen = true;
+function toggleAiDetail(){
+  aiDetailOpen = !aiDetailOpen;
+  $("aiBody").classList.toggle("collapsed", !aiDetailOpen);
+  $("aiCaret").textContent = aiDetailOpen ? "▾" : "▸";
+}
+function renderAIBox(st){
+  const ai = st.ai||{}, last = st.ai_last||null;
+  const modelEl=$("aiModel"), stateLine=$("aiStateLine");
+  modelEl.textContent = ai.model || (ai.enabled ? "duke nisur…" : "OFF");
+  if(!ai.enabled){
+    $("aiVerdict").textContent = "PAFIKTUAR";
+    $("aiVerdict").className = "ai-verdict v-HOLD";
+    $("aiReason").textContent = "AI Reasoning është i çaktivizuar. Aktivizoje te Cilësimet.";
+    $("aiMeta").textContent = "";
+    if(stateLine) stateLine.textContent = "AI OFF — agjentët punojnë vetëm me rregulla";
+    return;
+  }
+  if(last && last.symbol){
+    const v=last.verdict, c=last.confidence;
+    $("aiVerdict").textContent = `${v} · ${c}% · ${last.symbol}`;
+    $("aiVerdict").className = "ai-verdict v-"+v;
+    $("aiReason").textContent = last.reason || "—";
+    const age = Math.max(0, Math.round((Date.now()/1000 - last.ts)/1000));
+    $("aiMeta").textContent = `modeli: ${last.model} · ${age}s më parë · ${last.latency_ms||0}ms`;
+  } else if(ai.queue>0 || ai.jobs===0){
+    $("aiVerdict").textContent = "⏳ DUKE ANALIZUAR";
+    $("aiVerdict").className = "ai-verdict v-HOLD";
+    $("aiReason").innerHTML = '<span class="ai-thinking">🧠 Truri AI po analizon tregun… (punon në background, nuk bllokon ciklin)</span>';
+    $("aiMeta").textContent = "";
+  } else {
+    $("aiVerdict").textContent = "NË PRITJE";
+    $("aiVerdict").className = "ai-verdict v-HOLD";
+    $("aiReason").textContent = "Sapo të gjendet një setup i fortë, AI do ta analizojë.";
+    $("aiMeta").textContent = "";
+  }
+  if(stateLine){
+    stateLine.textContent = `AI ${ai.enabled?"AKTIV":"OFF"} · ${ai.provider||"?"} · modeli: ${ai.model||"?"} · ` +
+      `${ai.ok} ok / ${ai.fail} fail · radha: ${ai.queue||0}` +
+      (ai.last_latency_ms?` · vonesa: ${ai.last_latency_ms}ms`:"");
+  }
+}
+
+/* ================= chart ================= */
+let chartCtx=null;
+function drawChart(){
+  const cv=$("chart"); if(!cv) return;
+  const dpr = window.devicePixelRatio||1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if(W===0) return;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr); chartCtx=ctx;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
+  const C=S.candles; if(!C||C.length<2){ ctx.fillStyle="#5b6b80"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke ngarkuar tregun…",W/2,H/2); return; }
+
+  const padR=56, padB=58, padT=10, padL=6;
+  const vh=H-padT-padB, vw=W-padL-padR;
+  const lo=Math.min(...C.map(c=>c.l)), hi=Math.max(...C.map(c=>c.h));
+  const pad=(hi-lo)*0.06||1;
+  const min=lo-pad, max=hi+pad, range=max-min;
+  const xs=i=>padL + (i+0.5)*vw/C.length;
+  const ys=v=>padT + (1-(v-min)/range)*vh;
+  const volMax=Math.max(...C.map(c=>c.v),1e-9);
+
+  // grid + y labels
+  ctx.strokeStyle="#182238"; ctx.fillStyle="#5b6b80"; ctx.font="10px monospace"; ctx.textAlign="left";
+  for(let g=0;g<=4;g++){
+    const y=padT+g*vh/4, v=max-g*range/4;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    ctx.fillText(fmtPrice(v), W-padR+4, y+3);
+  }
+  // x labels (times)
+  ctx.textAlign="center";
+  const n=Math.min(C.length,8);
+  for(let i=0;i<n;i++){
+    const idx=Math.round(i*(C.length-1)/(n-1));
+    const x=xs(idx);
+    const d=new Date(C[idx].t);
+    ctx.fillText(d.toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"}), x, H-42);
+  }
+  // volume bars
+  const bw=Math.max(1.2, vw/C.length*0.62);
+  C.forEach((c,i)=>{
+    const x=xs(i)-bw/2;
+    const h=Math.max(1,(c.v/volMax)*(vh*0.22));
+    ctx.fillStyle = c.c>=c.o ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)";
+    ctx.fillRect(x, H-padB-h+8, bw, h);
+  });
+  // candles
+  C.forEach((c,i)=>{
+    const x=xs(i);
+    const up=c.c>=c.o;
+    ctx.strokeStyle=up?"#22c55e":"#ef4444";
+    ctx.fillStyle=up?"#22c55e":"#ef4444";
+    ctx.beginPath(); ctx.moveTo(x, ys(c.h)); ctx.lineTo(x, ys(c.l)); ctx.stroke();
+    const yO=ys(c.o), yC=ys(c.c);
+    const y=Math.min(yO,yC), hh=Math.max(1.5,Math.abs(yO-yC));
+    ctx.fillRect(x-bw/2, y, bw, hh);
+  });
+  // EMA9 / EMA21
+  const ema=(vals,p)=>{ const k=2/(p+1); const out=[vals[0]]; for(let i=1;i<vals.length;i++) out.push(vals[i]*k+out[i-1]*(1-k)); return out; };
+  const closes=C.map(c=>c.c);
+  const drawLine=(vals,color)=>{
+    ctx.strokeStyle=color; ctx.lineWidth=1.2; ctx.beginPath();
+    vals.forEach((v,i)=>{ const x=xs(i),y=ys(v); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.stroke();
+  };
+  drawLine(ema(closes,9),"rgba(56,189,248,.9)");
+  drawLine(ema(closes,21),"rgba(167,139,250,.9)");
+  // last price line
+  const last=C[C.length-1];
+  ctx.strokeStyle=last.c>=last.o?"rgba(34,197,94,.5)":"rgba(239,68,68,.5)";
+  ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(padL,ys(last.c)); ctx.lineTo(W-padR,ys(last.c)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle=last.c>=last.o?"#22c55e":"#ef4444";
+  ctx.fillRect(W-padR, ys(last.c)-7, padR, 14);
+  ctx.fillStyle="#04120a"; ctx.font="bold 9.5px monospace"; ctx.textAlign="left";
+  ctx.fillText(fmtPrice(last.c), W-padR+4, ys(last.c)+3);
+  // range
+  const t0=new Date(C[0].t), t1=new Date(C[C.length-1].t);
+  $("chartRange").textContent = `${t0.toLocaleDateString("sq",{day:"2-digit",month:"2-digit"})} ${t0.toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"})} → ${t1.toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"})}`;
+  $("chartLast").textContent = `${S.symbol.split("-")[0]} ${fmtPrice(last.c)} · ${last.c>=last.o?"▲":"▼"} ${fmt(Math.abs((last.c/last.o-1)*100),2)}%`;
+}
+
+/* ================= equity curve (compound chart) ================= */
+let eqHistory=[];
+async function refreshEquity(){
+  try{ const d = await jf("/api/equity?limit=400"); eqHistory=d.history; drawEquity(); }
+  catch(e){}
+}
+function drawEquity(){
+  const cv=$("eqChart"); if(!cv||!eqHistory.length) return;
+  const dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth, H=cv.clientHeight;
+  if(!W) return;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
+  const pts=eqHistory.filter(p=>p.e>0);
+  if(pts.length<2){ ctx.fillStyle="#5b6b80"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke mbledhur të dhënat…",W/2,H/2); return; }
+  const padL=8,padR=10,padT=12,padB=20;
+  const vw=W-padL-padR, vh=H-padT-padB;
+  const vals=pts.map(p=>p.e);
+  const lo=Math.min(...vals), hi=Math.max(...vals);
+  const pad=(hi-lo)*0.08||1; const min=lo-pad, max=hi+pad, range=max-min||1;
+  const xs=i=>padL+i*vw/(pts.length-1);
+  const ys=v=>padT+(1-(v-min)/range)*vh;
+  // baseline = starting balance
+  const start=10000;
+  ctx.strokeStyle="#2a3b55"; ctx.setLineDash([5,4]);
+  ctx.beginPath(); ctx.moveTo(padL,ys(start)); ctx.lineTo(W-padR,ys(start)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle="#5b6b80"; ctx.font="9.5px monospace"; ctx.textAlign="right";
+  ctx.fillText("10k fillim",W-padR,ys(start)-3);
+  // gradient area + line
+  const grad=ctx.createLinearGradient(0,padT,0,H-padB);
+  grad.addColorStop(0,"rgba(34,197,94,.45)"); grad.addColorStop(1,"rgba(34,197,94,0)");
+  ctx.beginPath();
+  pts.forEach((p,i)=>{ const x=xs(i),y=ys(p.e); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.lineTo(xs(pts.length-1),H-padB); ctx.lineTo(xs(0),H-padB); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.beginPath();
+  pts.forEach((p,i)=>{ const x=xs(i),y=ys(p.e); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.strokeStyle="#22c55e"; ctx.lineWidth=2; ctx.stroke();
+  // last point dot + label
+  const last=pts[pts.length-1];
+  ctx.beginPath(); ctx.arc(xs(pts.length-1),ys(last.e),4,0,Math.PI*2);
+  ctx.fillStyle="#4ade80"; ctx.fill();
+  ctx.strokeStyle="#0a0e14"; ctx.lineWidth=2; ctx.stroke();
+  const growth=(last.e/start);
+  $("eqGrowth").textContent = `Equity ${fmt(last.e)} · ${fmt(growth,3)}x`;
+}
+
+/* ================= render: feed ================= */
+function renderTickers(){
+  if(!S.tickers.length) return;
+  S.tickers.sort((a,b)=>Math.abs(b.chg24)-Math.abs(a.chg24));
+  $("feedCount").textContent = S.tickers.length;
+  $("tickerList").innerHTML = S.tickers.map(t=>`
+    <div class="row">
+      <div class="sym">${t.symbol.replace("-USDT","")}<small>USDT · Spot</small></div>
+      <div class="px">${fmtPrice(t.price)}<small class="${t.chg24>=0?'up':'dn'}">${t.chg24>=0?'▲':'▼'} ${fmt(Math.abs(t.chg24),2)}% 24h</small></div>
+    </div>`).join("");
+}
+function renderEvents(){
+  if(!S.events.length){ $("eventList").innerHTML='<div class="empty">Nuk ka ngjarje ende</div>'; return; }
+  $("eventList").innerHTML = S.events.map(ev=>{
+    const dot = ev.type==="fill"?'<span class="badge b-open">FILL</span>'
+      : ev.type==="close"?'<span class="badge b-win">EXIT</span>'
+      : ev.type==="ai"?'<span class="badge bl">AI</span>'
+      : ev.type==="seed"||ev.type==="reset"||ev.type==="settings"?'<span class="badge">SYS</span>'
+      : '<span class="badge">INFO</span>';
+    return `<div class="ev"><span class="t">${fmtTime(ev.ts)}</span><span class="m">${dot} ${ev.msg}</span></div>`;
+  }).join("");
+}
+
+/* ================= render: trades ================= */
+function renderTrades(){
+  if(!S.trades.length){ $("tradeList").innerHTML='<div class="empty">Ende pa tregti. Aktivizo ciklin nga Kryefaqja.</div>'; return; }
+  $("tradeList").innerHTML = S.trades.map(t=>{
+    const open=t.status==="open";
+    const badge = open?'<span class="badge b-open">OPEN</span>':(t.status==="win"?'<span class="badge b-win">WIN</span>':'<span class="badge b-loss">LOSS</span>');
+    return `<div class="trade">
+      <div class="t-head">
+        <div><span class="t-sym">${t.symbol.replace("-USDT","")}</span><span class="t-side side-${t.side}">${t.side}</span></div>
+        ${badge}
+      </div>
+      <div class="t-grid">
+        <div>Hyrja<b>${fmtPrice(t.entry)}</b></div>
+        <div>Dalja<b>${open?"—":fmtPrice(t.exit)}</b></div>
+        <div>Sasia<b>${fmt(t.qty,4)}</b></div>
+        <div class="t-pnl">PnL<b class="${(t.pnl??0)>=0?'up':'dn'}">${t.pnl==null?"—":sign(t.pnl)+fmt(t.pnl)}</b></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:7px;font-size:10px;color:var(--dim)">
+        <span>${fmtTime(t.opened_at)}${t.closed_at?" → "+fmtTime(t.closed_at):""}</span>
+        <span>Konf. ${fmt(t.confidence,0)}%${t.reason?` · ${t.reason.toUpperCase()}`:""}</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ================= websocket / polling ================= */
+let ws=null, wsRetry=0;
+function wsConnect(){
+  try{
+    const proto = location.protocol==="https:"?"wss":"ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = ()=>{ wsRetry=0; $("liveTxt").textContent="LIVE"; };
+    ws.onmessage = e=>{
+      try{
+        const m=JSON.parse(e.data);
+        if(m.type==="tick"){
+          if(m.tickers&&m.tickers.length){ S.tickers=m.tickers; renderTickers(); }
+          if(m.account&&m.stats){ S.status={...S.status,account:m.account,stats:m.stats,pipeline:m.pipeline}; renderStatus(); }
+        }
+      }catch(err){}
+    };
+    ws.onclose = ()=>{
+      $("liveTxt").textContent="RILIDHJE…";
+      const delay=Math.min(1000*Math.pow(1.6,wsRetry++),15000);
+      setTimeout(wsConnect,delay);
+    };
+    ws.onerror = ()=>{ try{ws.close();}catch(e){} };
+  }catch(e){ $("liveTxt").textContent="POLLING"; }
+}
+
+/* ================= tabs ================= */
+document.querySelectorAll(".ni").forEach(ni=>{
+  ni.addEventListener("click",()=>{
+    document.querySelectorAll(".ni").forEach(n=>n.classList.remove("on"));
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("on"));
+    ni.classList.add("on");
+    const tab=ni.dataset.tab;
+    $("tab-"+tab).classList.add("on");
+    S.tab=tab;
+    if(tab==="feed"){ refreshTickers(); refreshEvents(); }
+    if(tab==="trades"){ refreshTrades(); refreshEquity(); setTimeout(drawEquity,60); }
+    if(tab==="home"){ setTimeout(drawChart,60); }
+    if(tab==="settings"){ loadAISettings(); }
+  });
+});
+
+/* ================= chips ================= */
+function buildChips(){
+  $("symChips").innerHTML = SYMBOLS.map(s=>`<div class="chip ${s===S.symbol?"on":""}" data-sym="${s}">${s.replace("-USDT","")}</div>`).join("");
+  $("tfChips").innerHTML = TFS.map(t=>`<div class="chip tf ${t===S.interval?"on":""}" data-tf="${t}">${t}</div>`).join("");
+  document.querySelectorAll("[data-sym]").forEach(c=>c.addEventListener("click",()=>{
+    S.symbol=c.dataset.sym; buildChips(); refreshKlines();
+  }));
+  document.querySelectorAll("[data-tf]").forEach(c=>c.addEventListener("click",()=>{
+    S.interval=c.dataset.tf; buildChips(); refreshKlines();
+  }));
+}
+
+/* ================= actions ================= */
+$("btnCycle").addEventListener("click", async ()=>{
+  const b=$("btnCycle"); b.disabled=true; b.textContent="⏳ Duke ekzekutuar…";
+  try{ await jf("/api/cycle/run",{method:"POST"}); toast("Cikli u ekzekutua ✓"); }
+  catch(e){ toast("Gabim — provo sërish"); }
+  b.disabled=false; b.textContent="▶ Validoni ciklin tani";
+});
+$("btnReset").addEventListener("click", async ()=>{
+  if(!confirm("A je i sigurt që do ta rivendosësh llogarinë demo?")) return;
+  try{ await jf("/api/reset?seed=true",{method:"POST"}); toast("Llogaria u rivendos ✓"); refreshAll(); }
+  catch(e){ toast("Gabim"); }
+});
+async function toggleAuto(){
+  const sw=$("swAuto"); sw.classList.toggle("on");
+  const on=sw.classList.contains("on");
+  try{ await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auto_trade:on})});
+    toast(on?"Auto-trading AKTIV":"Auto-trading NDALUR"); }
+  catch(e){ sw.classList.toggle("on"); }
+}
+async function toggleCompound(){
+  const sw=$("swCompound"); sw.classList.toggle("on");
+  const on=sw.classList.contains("on");
+  try{ const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({compound:on})});
+    S.status.compound=d.compound;
+    $("modeKbd").textContent = d.compound?"KOMPONIM":"FIKS";
+    toast(on?"Komponimi AKTIV — fitimet ri-investohen":"Komponimi OFF — madhësi fikse pozicionesh");
+    refreshEquity();
+  }catch(e){ sw.classList.toggle("on"); }
+}
+
+/* ================= AI settings ================= */
+async function loadAISettings(){
+  try{
+    const d = await jf("/api/ai/settings");
+    const c = d.config;
+    $("swAI").classList.toggle("on", !!c.enabled);
+    $("aiProvider").value = c.provider || "ollama";
+    $("aiModelInp").value = c.model || "qwen2.5:0.5b";
+    $("aiOpenaiModelInp").value = c.openai_model || "gpt-4o-mini";
+    $("aiBaseUrlInp").value = c.base_url || "https://api.openai.com/v1";
+    $("aiKeyInp").value = d.has_key ? "••••••••" : "";
+    onProviderChange();
+    if(d.status) renderAIBox({ai:d.status, ai_last:S.status&&S.status.ai_last});
+  }catch(e){}
+}
+function onProviderChange(){
+  const p=$("aiProvider").value;
+  $("aiModelInp").parentElement.style.display = (p==="ollama"||p==="auto") ? "" : "none";
+  $("aiOpenaiModelInp").parentElement.style.display = p==="openai" ? "" : "none";
+  $("aiBaseUrlInp").parentElement.style.display = p==="openai" ? "" : "none";
+  $("aiKeyInp").parentElement.style.display = p==="openai" ? "" : "none";
+}
+async function toggleAI(){
+  const sw=$("swAI"); sw.classList.toggle("on");
+  const on=sw.classList.contains("on");
+  try{
+    await jf("/api/ai/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on})});
+    toast(on?"🧠 AI Reasoning AKTIV":"AI Reasoning OFF");
+    refreshStatus();
+  }catch(e){ sw.classList.toggle("on"); }
+}
+async function saveAI(){
+  const b=$("btnSaveAI"); b.disabled=true; b.textContent="⏳ Duke ruajtur…";
+  try{
+    let key = $("aiKeyInp").value;
+    if(key==="••••••••") key="";
+    const d = await jf("/api/ai/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      enabled: $("swAI").classList.contains("on"),
+      provider: $("aiProvider").value,
+      model: $("aiModelInp").value.trim() || "qwen2.5:0.5b",
+      openai_model: $("aiOpenaiModelInp").value.trim() || "gpt-4o-mini",
+      base_url: $("aiBaseUrlInp").value.trim() || "https://api.openai.com/v1",
+      api_key: key
+    })});
+    toast("✅ Cilësimet e AI u ruajtën");
+    if(d.status) renderAIBox({ai:d.status, ai_last:S.status&&S.status.ai_last});
+    refreshStatus();
+  }catch(e){ toast("Gabim gjatë ruajtjes"); }
+  b.disabled=false; b.textContent="💾 Ruaj cilësimet e AI";
+}
+
+function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); }
+
+/* ================= boot ================= */
+buildChips();
+refreshAll();
+loadAISettings();
+setInterval(refreshStatus, 4000);
+setInterval(refreshEvents, 5000);
+setInterval(refreshTrades, 8000);
+setInterval(refreshTickers, 10000);
+setInterval(()=>{ if(!document.hidden && S.tab==="trades") refreshEquity(); }, 15000);
+setInterval(()=>{ if(document.hidden===false && S.tab==="home") refreshKlines(); }, 20000);
+window.addEventListener("resize", drawChart);
+wsConnect();
+
+// PWA service worker (optional, best-effort)
+if("serviceWorker" in navigator && location.protocol.startsWith("https")){
+  navigator.serviceWorker.register("/sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
