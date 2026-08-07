@@ -1,0 +1,8 @@
+{
+  "name": "waynis-ai",
+  "version": "1.0.0",
+  "description": "Waynis AI paper trading bot",
+  "scripts": {
+    "start": "python3 -m pip install --quiet --no-cache-dir fastapi 'uvicorn[standard]' && python3 app.py"
+  }
+}

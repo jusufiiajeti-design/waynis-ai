@@ -152,6 +152,26 @@ async def download_code():
         })
 
 
+@app.get("/deploy.zip", include_in_schema=False)
+async def download_deploy_zip():
+    """Serve the easy-deploy package (single-file app) — no GitHub needed:
+    Hugging Face Spaces or Glitch, just 2-3 files to upload."""
+    from fastapi.responses import StreamingResponse
+    z = _find_file("WaynisAI-DeployLehte.zip")
+    if not z:
+        return JSONResponse({"error": "ZIP nuk gjendet"}, status_code=404)
+    with open(z, "rb") as f:
+        data = f.read()
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="WaynisAI-DeployLehte.zip"',
+            "Content-Length": str(len(data)),
+            "Cache-Control": "no-store",
+        })
+
+
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
@@ -300,9 +320,10 @@ async def ws_endpoint(ws: WebSocket):
 
 
 # ---------------------------------------------------------------------------
-# Entry point — PORT comes from the environment (Render sets it)
+# Entry point — PORT comes from the environment (Render sets it);
+# default 7860 = Hugging Face Spaces Docker port.
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", "8000"))
+    port = int(os.environ.get("PORT", "7860"))
     uvicorn.run(app, host="0.0.0.0", port=port)
