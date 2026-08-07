@@ -1303,9 +1303,9 @@ class ValidatorAgent(Agent):
         klines = ctx.candles.get(best["symbol"])
         if klines:
             vols = [c["v"] for c in klines]
-            vr = _vol_ratio(vols)
+            vr = vol_ratio(vols)
             closes = [c["c"] for c in klines]
-            r = _rsi(closes)
+            r = rsi(closes)
             if vr < 1.02:
                 self.report(f"{best['symbol']}: volumi i ulët — setup i hedhur",
                             best["symbol"], best["direction"], best["confidence"])

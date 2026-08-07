@@ -41,7 +41,7 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS)
 from providers import WATCHLIST
-from strategies import STRATEGIES, vol_ratio as _vol_ratio, rsi as _rsi
+from strategies import STRATEGIES, vol_ratio, rsi
 
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 
@@ -350,9 +350,9 @@ class ValidatorAgent(Agent):
         klines = ctx.candles.get(best["symbol"])
         if klines:
             vols = [c["v"] for c in klines]
-            vr = _vol_ratio(vols)
+            vr = vol_ratio(vols)
             closes = [c["c"] for c in klines]
-            r = _rsi(closes)
+            r = rsi(closes)
             if vr < 1.02:
                 self.report(f"{best['symbol']}: volumi i ulët — setup i hedhur",
                             best["symbol"], best["direction"], best["confidence"])
