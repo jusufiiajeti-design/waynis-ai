@@ -1,4 +1,13 @@
 # Render blueprint — Render e njohu automatikisht kur lidh repon
+#
+# ⚠️ PËR PARA REALE (Real Mode):
+# Shko te Render → waynis-ai → Environment → add dy variabla:
+#   BINANCE_API_KEY      = çelësi yt API nga Binance
+#   BINANCE_API_SECRET   = sekreti yt API nga Binance
+# (ose OKX_API_KEY / OKX_API_SECRET / OKX_PASSPHRASE për OKX,
+#  dhe REAL_EXCHANGE=okx nëse do OKX në vend të Binance)
+#
+# MOS i fut kurrë çelësat në këtë skedar ose në GitHub!
 services:
   - type: web
     name: waynis-ai

@@ -22,7 +22,9 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN)
+                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
+                    REAL_MAX_POSITIONS)
 from providers import WATCHLIST
 
 
@@ -234,15 +236,38 @@ class ValidatorAgent(Agent):
                         best["symbol"], best["direction"], best["confidence"])
             ctx.stop = True
             return
-        if len(e.open_positions()) >= MAX_OPEN:
-            self.report(f"Portofoli i plotë ({MAX_OPEN}/{MAX_OPEN}) — duke pritur hapësirë",
-                        best["symbol"], best["direction"], best["confidence"])
-            ctx.stop = True
-            return
+
+        if e.mode == "real":
+            # Real mode = SPOT, LONG-only, smaller max positions
+            if not e.exchange.configured:
+                self.report("💰 REAL: çelësat e Binance-ut nuk janë konfiguruar "
+                            "(BINANCE_API_KEY/SECRET te Render → Environment)",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            max_pos = REAL_MAX_POSITIONS
+            if len(e.open_positions()) >= max_pos:
+                self.report(f"💰 REAL: portofoli i plotë ({max_pos}/{max_pos})",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            if best["direction"] != "LONG":
+                self.report("💰 REAL: spot = vetëm LONG — SHORT anashkalohet",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+        else:
+            if len(e.open_positions()) >= MAX_OPEN:
+                self.report(f"Portofoli i plotë ({MAX_OPEN}/{MAX_OPEN}) — duke pritur hapësirë",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
 
         for cand in ctx.signals:
             ok, msg = self._validate(cand)
             if not ok:
+                continue
+            if e.mode == "real" and cand["direction"] != "LONG":
                 continue
             # ── AI layer: veto power if the brain has a fresh strong verdict ──
             verdict = e.brain.get_verdict(cand["symbol"])
@@ -288,6 +313,20 @@ class SizerAgent(Agent):
     async def execute(self, ctx, idx):
         e = self.engine
         sig = ctx.chosen
+
+        if e.mode == "real":
+            # REAL mode sizing: LONG-only, min notional, % of real balance
+            bal = e.real_balance()
+            max_notional = bal * REAL_MAX_NOTIONAL_PCT
+            notional = max_notional
+            qty = notional / sig["entry"]
+            ctx.qty = qty
+            self.report(
+                f"💰 REAL {qty:.6f} @ {sig['entry']:.6g} (~${notional:.2f}, "
+                f"maks {REAL_MAX_NOTIONAL_PCT*100:.0f}% e balancës)",
+                sig["symbol"], sig["direction"], sig["confidence"])
+            return
+
         equity = e.account()["equity"]
 
         if e.compound:
@@ -328,6 +367,21 @@ class FillerAgent(Agent):
                         sig["symbol"], sig["direction"], sig["confidence"])
             ctx.stop = True
             return
+
+        if e.mode == "real":
+            # REAL: execute on the exchange (spot, LONG)
+            ctx.trade_id = await e.real_open(sig, ctx.qty)
+            if not ctx.trade_id:
+                self.report(f"💰 REAL: urdhri dështoi për {sig['symbol']}",
+                            sig["symbol"], sig["direction"], sig["confidence"])
+                ctx.stop = True
+                return
+            self.report(f"💰 REAL {sig['direction']} {sig['symbol']} "
+                        f"{ctx.qty:.6f} @ {sig['entry']:.6g} — TP/SL në exchange",
+                        sig["symbol"], sig["direction"], sig["confidence"])
+            await asyncio.sleep(1.0)
+            return
+
         ctx.trade_id = e._open_trade(sig, ctx.qty)
         self.report(f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
                     f"{sig['entry']:.6g}",
@@ -368,7 +422,11 @@ class TrackerAgent(Agent):
                         e._update_sl(pos["id"], new_sl)
 
             if hit_tp or hit_sl:
-                await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+                if e.mode == "real":
+                    # REAL: close on the exchange (cancels bracket, market sell)
+                    await e.real_close(pos, price, "tp" if hit_tp else "sl")
+                else:
+                    await e._close_trade(pos, price, "tp" if hit_tp else "sl")
 
         if positions:
             p = positions[0]

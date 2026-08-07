@@ -227,6 +227,11 @@
     </div>
     <div class="live"><span class="dot"></span><span id="liveTxt">LIVE</span></div>
   </div>
+  <div id="modeBanner" style="display:none;max-width:480px;margin:0 auto;padding:8px 14px;
+    background:rgba(239,68,68,.15);border-bottom:1px solid rgba(239,68,68,.4);
+    color:#fca5a5;font-size:11.5px;font-weight:600;text-align:center">
+    💰 MODALITET REAL — PO TREGTON ME PARA TË VËRTETA (spot, vetëm LONG)
+  </div>
 </header>
 
 <div class="wrap">
@@ -235,7 +240,7 @@
   <section class="tab on" id="tab-home">
     <div class="hero">
       <div class="glow"></div>
-      <div class="tag">⚡ AI TRADING ENGINE · PAPER MODE</div>
+      <div class="tag" id="heroTag">⚡ AI TRADING ENGINE · PAPER MODE</div>
       <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span><br>
         <small>të fituara që nga fillimi</small></div>
       <div class="sub">Sot: <b id="todayVal">+0.00 USDT</b> · Equity: <span id="eqVal">—</span></div>
@@ -306,6 +311,9 @@
       <div class="tsum"><div class="n" id="tRate">0%</div><div class="l">Win rate</div></div>
       <div class="tsum"><div class="n up" id="tNet">+0.00</div><div class="l">PnL neto</div></div>
     </div>
+    <div style="font-size:10.5px;color:var(--dim);margin:2px 0 8px;text-align:center">
+      Tarifa të paguara gjithsej: <b id="feesPaid" style="color:var(--amber)">$0.00</b> · PnL-i është <b>pas tarifave</b> (0.1% / anë)
+    </div>
     <div class="sec-t">🧾 Historiku i tregtive</div>
     <div id="tradeList"></div>
     <button class="btn btn-ghost" id="btnReset" style="width:100%;margin-top:10px">↺ Rivendos llogarinë demo</button>
@@ -323,6 +331,18 @@
         <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
         <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
       </div>
+      <div class="set" style="border-top:1px dashed rgba(239,68,68,.4);margin-top:6px">
+        <div><div class="l" style="color:var(--red)">💰 Para reale (Real Mode)</div><div class="d">Spot · vetëm LONG · pa leverage · TP/SL në exchange</div></div>
+        <div class="switch" id="swMode" onclick="toggleMode()"></div>
+      </div>
+      <div id="realWarn" style="display:none;margin:10px 0 4px;padding:10px;border-radius:10px;
+        background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.5);font-size:11.5px;
+        color:#fca5a5;line-height:1.6">
+        ⚠️ <b>Kujdes!</b> Në këtë modalitet boti tregton me <b>para të vërteta</b> nga
+        llogaria jote në exchange. Vazhdo vetëm nëse e kupton rrezikun.
+      </div>
+      <div id="realStatus" style="display:none;margin:4px 0 8px;padding:10px;border-radius:10px;
+        background:var(--card2);border:1px solid var(--line);font-size:11.5px;color:var(--mut);line-height:1.7"></div>
       <div class="set">
         <div><div class="l">Cikli i botit</div><div class="d">6 agjentë + koordinator, çdo <b id="cycleSec">4</b> sekonda</div></div>
         <div class="kbd">LIVE</div>
@@ -445,10 +465,13 @@
     </div>
     <div class="sec-t">ℹ️ Rreth këtij boti</div>
     <div class="card" style="font-size:12px;color:var(--mut);line-height:1.7">
-      <b style="color:var(--txt)">Waynis AI</b> është një bot <b>paper trading</b>: çmimet janë
-      <b>reale</b> nga exchange (OKX/Coinbase), por tregtitë janë të simuluara — pa para reale.
-      Strategjia 6-Cycle: Scan → Predict → Validate → Size → Fill → Track.
-      <br><br>⚠️ Ky është demo edukative. Tregtimi i kriptomonedhave mbart rrezik të lartë.
+      <b style="color:var(--txt)">Waynis AI</b> është një bot tregtimi me strategjinë
+      6-Cycle: Scan → Predict → Validate → Size → Fill → Track.
+      Në <b>Paper mode</b> tregtitë janë të simuluara (me tarifa reale 0.1%/anë).
+      Në <b>Real mode</b> boti tregton në Binance me para të vërteta — spot,
+      vetëm LONG, me TP/SL mbrojtëse në exchange.
+      <br><br>⚠️ Tregtimi i kriptomonedhave mbart rrezik të lartë. Asnjë strategji
+      nuk garanton fitim. Investo vetëm para që mund t'i humbësh.
     </div>
     <div class="foot-note">Waynis AI · Paper Trading Engine<br>Ndërtuar me çmime reale të tregut</div>
   </section>
@@ -541,12 +564,28 @@ function renderStatus(){
   $("tWin").textContent=st.wins; $("tLoss").textContent=st.losses;
   $("tRate").textContent=fmt(st.win_rate,1)+"%";
   const net=$("tNet"); net.textContent=sign(st.realized)+fmt(st.realized); net.className="n "+(st.realized>=0?"up":"dn");
+  if($("feesPaid")) $("feesPaid").textContent = "$"+fmt(st.fees_paid||0);
   // compound state
   const sw=$("swCompound");
   sw.classList.toggle("on", !!S.status.compound);
   $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
   const g=a.growth||1;
   const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
+  // mode state (paper / real)
+  const isReal = S.status.mode==="real";
+  $("modeBanner").style.display = isReal?"block":"none";
+  $("heroTag").textContent = isReal ? "💰 AI TRADING ENGINE · REAL MODE (PARA TË VËRTETA)" : "⚡ AI TRADING ENGINE · PAPER MODE";
+  $("swMode").classList.toggle("on", isReal);
+  $("realWarn").style.display = isReal?"block":"none";
+  $("realStatus").style.display = isReal?"block":"none";
+  if(isReal && S.status.real){
+    const r=S.status.real;
+    $("realStatus").innerHTML =
+      `💰 Exchange: <b>${r.exchange||"?"}</b><br>`+
+      `Bilanci USDT: <b>${fmt(r.balance_usdt)}</b><br>`+
+      `Çelësat: ${r.configured?"✅ të konfiguruar":"❌ MUNGON konfigurimi — vendos BINANCE_API_KEY/SECRET te Render → Environment"}`+
+      (r.configured?`<br>Maks pozicione: <b>${r.max_positions}</b> · Maks/urdhër: <b>${Math.round(r.max_notional_pct*100)}%</b> e balancës`:"");
+  }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
   renderAIBox(S.status);
@@ -791,7 +830,7 @@ function renderTrades(){
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:7px;font-size:10px;color:var(--dim)">
         <span>${fmtTime(t.opened_at)}${t.closed_at?" → "+fmtTime(t.closed_at):""}</span>
-        <span>Konf. ${fmt(t.confidence,0)}%${t.reason?` · ${t.reason.toUpperCase()}`:""}</span>
+        <span>${t.fees?`Tarifa $${fmt(t.fees)} · `:""}Konf. ${fmt(t.confidence,0)}%${t.reason?` · ${t.reason.toUpperCase()}`:""}</span>
       </div>
     </div>`;
   }).join("");
@@ -878,6 +917,24 @@ async function toggleCompound(){
     toast(on?"Komponimi AKTIV — fitimet ri-investohen":"Komponimi OFF — madhësi fikse pozicionesh");
     refreshEquity();
   }catch(e){ sw.classList.toggle("on"); }
+}
+async function toggleMode(){
+  const sw=$("swMode");
+  const turningOn = !sw.classList.contains("on");
+  if(turningOn){
+    if(!confirm("⚠️ PO TREGTO ME PARA TË VËRTETA?\n\nKjo aktivizon Real Mode: boti do të blejë kripto me paratë e tua në Binance (spot, vetëm LONG, me TP/SL mbrojtëse).\n\nVetëm nëse je i sigurt — shtyp OK.")) return;
+  }
+  const target = turningOn ? "real" : "paper";
+  try{
+    const d = await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:target})});
+    S.status.mode = d.mode;
+    sw.classList.toggle("on", d.mode==="real");
+    toast(d.mode==="real"?"💰 REAL MODE AKTIV":"📝 Paper mode");
+    refreshStatus();
+    if(d.mode==="real") setTimeout(async ()=>{
+      try{ const rd = await jf("/api/real/status"); S.status.real=rd.real; renderStatus(); }catch(e){}
+    }, 1500);
+  }catch(e){ sw.classList.toggle("on"); toast("Gabim"); }
 }
 
 /* ================= AI settings ================= */

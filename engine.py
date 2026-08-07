@@ -1,15 +1,19 @@
 """
-Waynis AI — paper-trading engine (COORDINATOR).
+Waynis AI — trading engine (COORDINATOR).
 
 The coordinator owns the account state and drives the six specialised
 trading agents (agents.py) through the 6-Cycle Execution Pipeline:
 
     Scan → Predict → Validate → Size → Fill → Track
 
-All trades are paper trades (no real money). Market prices are real.
-Compounding is configurable: FIXED sizing vs COMPOUND sizing.
+Modes:
+  * paper (default) — simulated trades with REAL market prices.
+  * real  — REAL money, SPOT only, LONG-only, on Binance (or OKX).
+            Keys come from environment variables only. TP/SL are attached
+            to the exchange (bracket orders) for protection.
 """
 import asyncio
+import json
 import os
 import random
 import sqlite3
@@ -17,20 +21,25 @@ import time
 from datetime import datetime, timezone
 
 from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
-                    TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT, MIN_CONFIDENCE, MAX_OPEN)
+                    TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT, MIN_CONFIDENCE,
+                    MAX_OPEN, FEE_RATE, REAL_MIN_NOTIONAL,
+                    REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, PredictorAgent, ValidatorAgent,
                     SizerAgent, FillerAgent, TrackerAgent)
 from brain import AIBrain
+from exchange import get_exchange, to_exchange_symbol
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "paper.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
+SETTINGS_PATH = os.path.join(BASE_DIR, "data", "trading_config.json")
 
 PIPELINE_AGENTS = [  # metadata for the UI
     {"name": "Scanner",   "icon": "📡", "role": "Tërheq çmime live + qirinj"},
     {"name": "Predictor", "icon": "🎯", "role": "EMA 9/21 + RSI 14 parashikim"},
     {"name": "Validator", "icon": "✅", "role": "Rregullat e rrezikut dhe volumit"},
     {"name": "Sizer",     "icon": "⚖️", "role": "Madhësia e pozicionit (fiks / komponim)"},
-    {"name": "Filler",    "icon": "⚡", "role": "Ekzekutimi i urdhrit paper"},
+    {"name": "Filler",    "icon": "⚡", "role": "Ekzekutimi i urdhrit"},
     {"name": "Tracker",   "icon": "📊", "role": "TP / SL / trailing / PnL live"},
 ]
 
@@ -43,6 +52,20 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def _load_settings():
+    try:
+        with open(SETTINGS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {"mode": "paper"}
+
+
+def _save_settings(s):
+    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(s, f, indent=2)
+
+
 class PaperEngine:
     def __init__(self, market: MarketData):
         self.market = market
@@ -51,6 +74,10 @@ class PaperEngine:
         self.running = True
         self.auto_trade = True
         self.compound = True          # COMPOUND sizing by default
+        settings = _load_settings()
+        self.mode = settings.get("mode", "paper")   # "paper" | "real"
+        self.exchange = get_exchange()              # real-money client
+        self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
         # six autonomous agents + coordinator (this engine)
         self.agents = [
             ScannerAgent(self), PredictorAgent(self), ValidatorAgent(self),
@@ -90,10 +117,19 @@ class PaperEngine:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL,
                 tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT,
-                pnl REAL, confidence REAL, reason TEXT)""")
+                pnl REAL, confidence REAL, reason TEXT,
+                fees REAL, bracket TEXT)""")
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
+            # migrate older DBs: add fees/bracket if missing
+            cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
+            for col, ddl in [("fees", "REAL"), ("bracket", "TEXT")]:
+                if col not in cols:
+                    try:
+                        c.execute(f"ALTER TABLE trades ADD COLUMN {col} {ddl}")
+                    except Exception:
+                        pass
             row = c.execute("SELECT * FROM account WHERE id=1").fetchone()
             if not row:
                 c.execute(
@@ -157,8 +193,6 @@ class PaperEngine:
                    "Historik demo i mbjellë: 14 tregti të mbyllura", None))
 
     def _seed_equity(self, c=None):
-        """Seed a 24h equity curve ending at the current equity, so the
-        compound-growth chart looks alive from the first open."""
         if c is None:
             with self._conn() as conn:
                 end = conn.execute(
@@ -180,9 +214,58 @@ class PaperEngine:
         self.equity_history = pts
 
     # ------------------------------------------------------------------
+    # Mode (paper / real)
+    # ------------------------------------------------------------------
+    def set_mode(self, mode):
+        mode = "real" if mode == "real" else "paper"
+        old = self.mode
+        self.mode = mode
+        _save_settings({"mode": mode})
+        self._event("settings",
+                    f"Modaliteti: {'💰 REAL (para të vërteta)' if mode == 'real' else '📝 Paper (demo)'}")
+        if mode == "real":
+            self.exchange = get_exchange()
+        return mode
+
+    def real_status(self):
+        st = self.exchange.status()
+        st["mode"] = self.mode
+        st["min_notional"] = REAL_MIN_NOTIONAL
+        st["max_positions"] = REAL_MAX_POSITIONS
+        st["max_notional_pct"] = REAL_MAX_NOTIONAL_PCT
+        st["fee_rate"] = FEE_RATE
+        try:
+            st["balance_usdt"] = self.real_balance()
+        except Exception:
+            st["balance_usdt"] = None
+        return st
+
+    def real_balance(self, force=False):
+        """Cached USDT balance from the exchange (cache 10s)."""
+        ts, bal = self.real_balance_cache
+        if force or time.time() - ts > 10:
+            bal = self.exchange.balance_usdt()
+            self.real_balance_cache = (time.time(), bal)
+        return bal
+
+    # ------------------------------------------------------------------
     # Account / status helpers
     # ------------------------------------------------------------------
     def account(self):
+        if self.mode == "real":
+            try:
+                bal = self.real_balance()
+            except Exception:
+                bal = 0.0
+            return {
+                "balance": round(bal, 2),
+                "equity": round(bal, 2),
+                "peak": round(max(bal, self.real_balance_cache[1]), 2) if False else round(bal, 2),
+                "unrealized": 0.0,
+                "growth": round(bal / STARTING_BALANCE, 4) if STARTING_BALANCE else 0.0,
+                "started_at": now_iso(),
+                "real": True,
+            }
         with self._conn() as c:
             row = c.execute("SELECT balance,peak,started_at FROM account WHERE id=1").fetchone()
             balance, peak, started_at = float(row[0]), float(row[1]), row[2]
@@ -196,16 +279,17 @@ class PaperEngine:
             "unrealized": round(unreal, 2),
             "growth": round(equity / STARTING_BALANCE, 4),
             "started_at": started_at,
+            "real": False,
         }
 
     def open_positions(self):
         with self._conn() as c:
             rows = c.execute(
-                "SELECT symbol,side,entry,qty,tp,sl,opened_at,id,confidence "
-                "FROM trades WHERE status='open'").fetchall()
+                "SELECT symbol,side,entry,qty,tp,sl,opened_at,id,confidence,"
+                "bracket FROM trades WHERE status='open'").fetchall()
         out = []
         for r in rows:
-            sym, side, entry, qty, tp, sl, opened, tid, conf = r
+            sym, side, entry, qty, tp, sl, opened, tid, conf, bracket = r
             price = self.last_tickers.get(sym, {}).get("price") or entry
             if side == "LONG":
                 pnl = (price - entry) * qty
@@ -215,24 +299,27 @@ class PaperEngine:
                 "id": tid, "symbol": sym, "side": side, "entry": entry,
                 "qty": qty, "tp": tp, "sl": sl, "opened_at": opened,
                 "confidence": conf, "pnl": round(pnl, 2), "price": price,
+                "bracket": bracket,
             })
         return out
 
     def stats(self):
         with self._conn() as c:
             closed = c.execute(
-                "SELECT status, pnl, closed_at FROM trades WHERE status!='open'").fetchall()
-        wins = sum(1 for s, _, _ in closed if s == "win")
+                "SELECT status, pnl, closed_at, fees FROM trades "
+                "WHERE status!='open'").fetchall()
+        wins = sum(1 for s, _, _, _ in closed if s == "win")
         total = len(closed)
         win_rate = round(100.0 * wins / total, 1) if total else 0.0
-        realized = round(sum(p for _, p, _ in closed), 2)
+        realized = round(sum(p for _, p, _, _ in closed), 2)
+        fees = round(sum(f for _, _, _, f in closed if f), 2)
         now = time.time()
         cutoff = now - 86400
         snap24 = [e for e in self.equity_history if e[0] <= cutoff]
         if snap24:
             pnl24 = self.account()["equity"] - snap24[-1][1]
         else:
-            pnl24 = round(sum(p for _, p, ts in closed
+            pnl24 = round(sum(p for _, p, ts, _ in closed
                               if ts and datetime.fromisoformat(ts).timestamp() >= cutoff), 2)
         try:
             started = datetime.fromisoformat(self.account()["started_at"]).timestamp()
@@ -246,6 +333,7 @@ class PaperEngine:
             "losses": total - wins,
             "trades": total,
             "realized": realized,
+            "fees_paid": fees,
             "pnl_24h": round(pnl24, 2),
             "avg_day": avg_day,
             "open": len(self.open_positions()),
@@ -262,10 +350,9 @@ class PaperEngine:
     # Coordinator loop
     # ------------------------------------------------------------------
     async def run(self):
-        """Background loop: every CYCLE_SECONDS run one full 6-agent cycle."""
         self.loop = asyncio.get_running_loop()
-        AIBrain.ensure_ollama()          # best-effort local LLM
-        await self.brain.start()         # 🧠 background AI worker
+        AIBrain.ensure_ollama()
+        await self.brain.start()
         idx = 0
         while self.running:
             t0 = time.perf_counter()
@@ -280,13 +367,11 @@ class PaperEngine:
             await asyncio.sleep(CYCLE_SECONDS)
 
     async def run_cycle_now(self):
-        """Force one full 6-agent cycle immediately (Validate button)."""
         async with self._lock:
             await self._cycle(-1)
         return self.pipeline
 
     async def _cycle(self, idx):
-        """Coordinator: dispatch the six agents in pipeline order."""
         self.pipeline["cycles_run"] += 1
         ctx = CycleContext(self, self.market, idx)
         for agent in self.agents:
@@ -303,15 +388,16 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # Order management (owned by the coordinator; agents call these)
     # ------------------------------------------------------------------
-    def _open_trade(self, sig, qty):
+    def _open_trade(self, sig, qty, bracket=None):
         if qty <= 0:
             return None
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO trades(symbol,side,entry,qty,tp,sl,status,"
-                "opened_at,confidence) VALUES(?,?,?,?,?,?,?,?,?)",
+                "opened_at,confidence,bracket) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (sig["symbol"], sig["direction"], sig["entry"], qty,
-                 sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"]))
+                 sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
+                 json.dumps(bracket) if bracket else None))
             return cur.lastrowid
 
     def _update_sl(self, trade_id, new_sl):
@@ -319,16 +405,20 @@ class PaperEngine:
             c.execute("UPDATE trades SET sl=? WHERE id=?", (new_sl, trade_id))
 
     async def _close_trade(self, pos, price, reason):
+        """Close a PAPER position (with real fees simulated)."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
-            pnl = (price - pos["entry"]) * qty
+            gross = (price - pos["entry"]) * qty
         else:
-            pnl = (pos["entry"] - price) * qty
+            gross = (pos["entry"] - price) * qty
+        fees = (pos["entry"] * qty + price * qty) * FEE_RATE
+        pnl = gross - fees
         status = "win" if pnl > 0 else "loss"
         with self._conn() as c:
             c.execute(
-                "UPDATE trades SET exit=?, status=?, closed_at=?, pnl=?, reason=? "
-                "WHERE id=?", (price, status, now_iso(), pnl, reason, pos["id"]))
+                "UPDATE trades SET exit=?, status=?, closed_at=?, pnl=?, "
+                "reason=?, fees=? WHERE id=?",
+                (price, status, now_iso(), pnl, reason, fees, pos["id"]))
             c.execute(
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
@@ -336,6 +426,72 @@ class PaperEngine:
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
+                    f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT "
+                    f"(tarifa ${fees:.2f})",
+                    pos["symbol"])
+
+    # ------------------------------------------------------------------
+    # REAL-money order management (spot, LONG-only)
+    # ------------------------------------------------------------------
+    async def real_open(self, sig, qty):
+        """Open a real LONG position with TP/SL attached on the exchange."""
+        ex = self.exchange
+        sym = to_exchange_symbol(sig["symbol"], ex)
+        try:
+            res = await asyncio.to_thread(ex.market_buy, sym, qty)
+        except Exception as e:
+            self._event("error", f"💰 REAL: dështoi hapja {sym}: {str(e)[:100]}")
+            return None
+        fill = res.get("fill", {})
+        exec_price = float(fill.get("fills", [{}])[0].get("price", 0)) if isinstance(fill, dict) else 0
+        if not exec_price:
+            exec_price = res.get("price", sig["entry"])
+        entry = exec_price or sig["entry"]
+        sig2 = dict(sig)
+        sig2["entry"] = entry
+        sig2["tp"] = entry * (1 + 0.0045)
+        sig2["sl"] = entry * (1 - 0.0035)
+        tid = self._open_trade(sig2, qty, bracket=res.get("bracket"))
+        if tid:
+            self._event("fill",
+                        f"💰 REAL {sig['direction']} {sig['symbol']} "
+                        f"{qty:.6f} @ {entry:.6g} (TP/SL në exchange)",
+                        sig["symbol"])
+        return tid
+
+    async def real_close(self, pos, price, reason):
+        """Close a real LONG position: cancel bracket, market sell."""
+        ex = self.exchange
+        sym = to_exchange_symbol(pos["symbol"], ex)
+        qty = pos["qty"]
+        try:
+            bracket = json.loads(pos.get("bracket") or "[]")
+            res = await asyncio.to_thread(ex.market_sell_all, sym, qty, bracket)
+        except Exception as e:
+            self._event("error",
+                        f"💰 REAL: dështoi mbyllja {sym}: {str(e)[:100]}")
+            return
+        exit_price = price
+        try:
+            fills = res.get("fills", []) if isinstance(res, dict) else []
+            if fills:
+                exit_price = float(fills[0].get("price", price))
+        except Exception:
+            pass
+        gross = (exit_price - pos["entry"]) * qty
+        fees = (pos["entry"] * qty + exit_price * qty) * FEE_RATE
+        pnl = gross - fees
+        status = "win" if pnl > 0 else "loss"
+        with self._conn() as c:
+            c.execute(
+                "UPDATE trades SET exit=?, status=?, closed_at=?, pnl=?, "
+                "reason=?, fees=? WHERE id=?",
+                (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
+        self.cooldown[pos["symbol"]] = time.time()
+        self.real_balance_cache = (0.0, 0.0)
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        self._event("close",
+                    f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT",
                     pos["symbol"])
 
@@ -374,10 +530,11 @@ class PaperEngine:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
-                "closed_at,pnl,confidence,reason FROM trades "
+                "closed_at,pnl,confidence,reason,fees,bracket FROM trades "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         keys = ["id", "symbol", "side", "entry", "exit", "qty", "tp", "sl",
-                "status", "opened_at", "closed_at", "pnl", "confidence", "reason"]
+                "status", "opened_at", "closed_at", "pnl", "confidence",
+                "reason", "fees", "bracket"]
         out = []
         for r in rows:
             d = dict(zip(keys, r))
@@ -392,9 +549,7 @@ class PaperEngine:
         return out
 
     def equity_curve(self, limit=400):
-        """Returns [{t, e}] for the compounding chart."""
         out = [{"t": int(ts), "e": eq} for ts, eq in self.equity_history[-limit:]]
-        # always append the very latest equity so the curve ends at 'now'
         latest = self.account()["equity"]
         if not out or out[-1]["e"] != latest:
             out.append({"t": int(time.time()), "e": latest})

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from providers import MarketData, WATCHLIST
 from engine import PaperEngine, CYCLE_SECONDS
+from config import FEE_RATE
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = BASE          # files live at project root (flat, phone-friendly deploy)
@@ -218,6 +219,12 @@ async def health():
 async def status():
     acc = engine.account()
     stats = engine.stats()
+    real = None
+    if engine.mode == "real":
+        try:
+            real = engine.real_status()
+        except Exception as e:
+            real = {"error": str(e)[:120]}
     return {
         "account": acc,
         "stats": stats,
@@ -225,6 +232,9 @@ async def status():
         "cycle_seconds": CYCLE_SECONDS,
         "auto_trade": engine.auto_trade,
         "compound": engine.compound,
+        "mode": engine.mode,
+        "real": real,
+        "fee_rate": FEE_RATE,
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -304,8 +314,21 @@ async def set_settings(body: dict):
                       ("AKTIV — pozicionet rriten me equity"
                        if engine.compound else
                        "OFF — madhësi fikse pozicionesh"))
+    if "mode" in body:
+        new_mode = engine.set_mode(str(body["mode"]))
+        return {"ok": True, "mode": new_mode,
+                "auto_trade": engine.auto_trade,
+                "compound": engine.compound}
     return {"ok": True, "auto_trade": engine.auto_trade,
-            "compound": engine.compound}
+            "compound": engine.compound, "mode": engine.mode}
+
+
+@app.get("/api/real/status")
+async def real_status():
+    try:
+        return {"ok": True, "real": engine.real_status()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
 
 
 @app.post("/api/reset")
