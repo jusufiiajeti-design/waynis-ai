@@ -29,6 +29,7 @@ from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
+from learning import load_history, enrich
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -80,6 +81,9 @@ class PaperEngine:
         self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
+        self.meta_state = {"recent": [], "threshold": 0.05,
+                           "system_win_rate": None}
+        self.learning_history = load_history()      # learning curve points
         # twenty autonomous agents + coordinator (this engine)
         self.agents = [cls(self) for cls in ALL_AGENTS]
         self.pipeline = {
@@ -599,3 +603,17 @@ class PaperEngine:
         stats = dict(self.strategy_stats)
         stats["__last_trade_id"] = self.learning_last_id
         save_weights(stats)
+
+    def learning_status(self):
+        """Rich learning view for the UI."""
+        enriched = enrich(self.strategy_stats)
+        by_weight = sorted(enriched.items(),
+                           key=lambda kv: kv[1].get("weight", 1.0),
+                           reverse=True)
+        return {
+            "strategies": dict(by_weight),
+            "meta": self.meta_state,
+            "history": self.learning_history[-120:],
+            "trained": sum(1 for s in self.strategy_stats.values()
+                           if s.get("trades", 0) > 0),
+        }

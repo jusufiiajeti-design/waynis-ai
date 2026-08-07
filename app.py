@@ -959,6 +959,190 @@ STRATEGIES = [
 ]
 
 
+# ============ learning.py ============
+"""
+Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
+
+After every closed trade we attribute its PnL to the strategies that voted
+for it (trade.votes) and recompute, per strategy:
+    * trades, wins, losses, win rate
+    * profit factor      (gross wins / gross losses)
+    * expectancy         (average net PnL per trade)
+    * recency            (recent PnL matters more than old trades)
+
+Each strategy weight in [0.35, 1.7] blends:
+    base           0.50
+    win-rate edge  (wins - losses) / trades
+    profit-factor  (PF - 1) * factor
+    recency        recent avg PnL
+    EXPLORE bonus  strategies with few trades get a nudge so the system
+                   keeps trying them while it learns (exploration)
+
+META-LEARNING (the system adapts itself):
+    * rolling system win rate over the last N closed trades
+    * if winning  -> consensus threshold loosens (exploit more)
+    * if losing   -> consensus threshold tightens (be conservative)
+    * the current threshold is used by the Consensus agent each cycle.
+"""
+import json
+import os
+import time
+
+WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
+HISTORY_PATH = os.path.join(os.path.dirname(__file__), "data", "learning_history.json")
+
+DEFAULT_STATS = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0,
+                 "gross_win": 0.0, "gross_loss": 0.0, "recent": [],
+                 "weight": 1.0, "updated_at": None}
+
+EXPLORE_MIN_TRADES = 5      # strategies with fewer trades get a boost
+RECENT_WINDOW = 20          # recent-PnL window
+WEIGHT_MIN, WEIGHT_MAX = 0.35, 1.7
+BASE_THRESHOLD = 0.05       # consensus threshold baseline
+META_WINDOW = 30            # rolling system performance window
+HISTORY_MAX = 240           # learning-curve points kept
+
+
+# ---------------------------------------------------------------------------
+# Weight computation
+# ---------------------------------------------------------------------------
+def compute_weight(st):
+    t = st["trades"]
+    if t == 0:
+        return 1.0
+    wr = (st["wins"] - st["losses"]) / t                  # -1 .. 1
+    if st["gross_loss"] > 0:
+        pf = st["gross_win"] / st["gross_loss"]
+    else:
+        pf = 3.0 if st["gross_win"] > 0 else 0.0
+    rec = sum(st["recent"]) / max(len(st["recent"]), 1)   # avg recent pnl
+
+    w = 0.5
+    w += max(-0.40, min(0.40, wr * 0.50))                 # win-rate edge
+    w += max(-0.20, min(0.25, (pf - 1.0) * 0.15))         # profit-factor edge
+    w += max(-0.25, min(0.30, rec / 40.0))                # recency
+    if t < EXPLORE_MIN_TRADES:                            # exploration bonus
+        w += (EXPLORE_MIN_TRADES - t) / EXPLORE_MIN_TRADES * 0.25
+    return max(WEIGHT_MIN, min(WEIGHT_MAX, round(w, 3)))
+
+
+# ---------------------------------------------------------------------------
+# Aggregate per-strategy stats from the trades table
+# ---------------------------------------------------------------------------
+def aggregate_from_trades(conn, last_id=0):
+    """Returns (stats dict keyed by strategy name, max trade id processed)."""
+    rows = conn.execute(
+        "SELECT id, votes, status, pnl FROM trades "
+        "WHERE status!='open' AND id>? ORDER BY id", (last_id,)).fetchall()
+    stats = {}
+    max_id = last_id
+    for tid, votes_json, status, pnl in rows:
+        max_id = max(max_id, tid)
+        if not votes_json:
+            continue
+        try:
+            names = json.loads(votes_json)
+        except Exception:
+            continue
+        for name in names:
+            st = stats.setdefault(name, dict(DEFAULT_STATS))
+            st["trades"] += 1
+            p = pnl or 0.0
+            if status == "win":
+                st["wins"] += 1
+                st["gross_win"] += max(p, 0.0)
+            else:
+                st["losses"] += 1
+                st["gross_loss"] += max(-p, 0.0)
+            st["pnl"] = round(st["pnl"] + p, 2)
+            st["recent"].append(p)
+            if len(st["recent"]) > RECENT_WINDOW:
+                st["recent"] = st["recent"][-RECENT_WINDOW:]
+    for name, st in stats.items():
+        st["weight"] = compute_weight(st)
+        st["updated_at"] = time.time()
+        # keep the dict clean for JSON
+        st["recent"] = [round(x, 2) for x in st["recent"][-10:]]
+    return stats, max_id
+
+
+def enrich(stats):
+    """Add derived fields (win rate, profit factor, expectancy) for the UI."""
+    out = {}
+    for name, st in stats.items():
+        d = dict(st)
+        t = d["trades"]
+        d["win_rate"] = round(100.0 * d["wins"] / t, 1) if t else 0.0
+        d["profit_factor"] = round(
+            d["gross_win"] / d["gross_loss"], 2) if d["gross_loss"] > 0 else (
+            9.99 if d["gross_win"] > 0 else 0.0)
+        d["expectancy"] = round(d["pnl"] / t, 3) if t else 0.0
+        out[name] = d
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Meta-learning: adaptive consensus threshold from rolling system results
+# ---------------------------------------------------------------------------
+def meta_threshold(recent_results, base=BASE_THRESHOLD):
+    if not recent_results:
+        return base
+    wins = sum(1 for r in recent_results if r > 0)
+    wr = wins / len(recent_results)
+    if wr >= 0.55:
+        return round(max(0.03, base * 0.8), 3)      # exploit — looser
+    if wr <= 0.42:
+        return round(min(0.10, base * 1.6), 3)      # conserve — stricter
+    return base
+
+
+def system_win_rate(recent_results):
+    if not recent_results:
+        return None
+    return round(100.0 * sum(1 for r in recent_results if r > 0) /
+                 len(recent_results), 1)
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+def load_weights():
+    try:
+        with open(WEIGHTS_PATH) as f:
+            d = json.load(f)
+        for name in d:
+            d[name] = {**DEFAULT_STATS, **d[name]}
+        return d
+    except Exception:
+        return {}
+
+
+def save_weights(stats):
+    try:
+        os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
+        with open(WEIGHTS_PATH, "w") as f:
+            json.dump(stats, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_history():
+    try:
+        with open(HISTORY_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_history(history):
+    try:
+        os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+        with open(HISTORY_PATH, "w") as f:
+            json.dump(history[-HISTORY_MAX:], f)
+    except Exception:
+        pass
+
+
 # ============ agents.py ============
 """
 Waynis AI — 20-AGENT collaborative control system.
@@ -1138,6 +1322,7 @@ class ConsensusAgent(Agent):
     async def execute(self, ctx, idx):
         e = self.engine
         weights = e.strategy_stats
+        threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
         candidates = []
 
         for sym, votes in ctx.votes.items():
@@ -1150,9 +1335,9 @@ class ConsensusAgent(Agent):
             if tw <= 0:
                 continue
             score = net / tw                     # -1 .. 1
-            if score > 0.05:
+            if score > threshold:
                 direction = "LONG"
-            elif score < -0.05:
+            elif score < -threshold:
                 direction = "SHORT"
             else:
                 continue
@@ -1169,7 +1354,8 @@ class ConsensusAgent(Agent):
             })
 
         if not candidates:
-            self.report("Pa konsensus mes strategjive — asnjë tregti e sigurt")
+            self.report(f"Pa konsensus (pragu adaptiv {threshold:.2f}) — "
+                        f"boti pret sinjale më të forta")
             ctx.stop = True
             return
 
@@ -1180,7 +1366,7 @@ class ConsensusAgent(Agent):
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
-            f"(net {best['score']:+.2f}) · mbështesin: "
+            f"(net {best['score']:+.2f}, prag {threshold:.2f}) · mbështesin: "
             f"{', '.join(best['supporting'][:4])}",
             best["symbol"], best["direction"], best["confidence"])
 
@@ -1499,60 +1685,69 @@ class TrackerAgent(Agent):
 
 
 # ======================================================================
-# 🎓 20 — LEARNING AGENT (updates strategy weights after every trade)
+# 🎓 20 — LEARNING AGENT (meta-learning: weights + adaptive threshold)
 # ======================================================================
 class LearningAgent(Agent):
     step, name, icon = 5, "Learning", "🎓"
-    role = "Mëson: rregullon peshat e strategjive pas çdo tregtie"
+    role = "Mëson: peshat e strategjive + pragu adaptiv i konsensusit"
 
     async def execute(self, ctx, idx):
         e = self.engine
-        stats = e.strategy_stats
-        last_id = e.learning_last_id
-        updated = set()
-
         try:
             with e._conn() as c:
-                rows = c.execute(
-                    "SELECT id, votes, status, pnl FROM trades "
-                    "WHERE status!='open' AND id>? ORDER BY id",
-                    (last_id,)).fetchall()
-            max_id = last_id
-            for tid, votes_json, status, pnl in rows:
-                max_id = max(max_id, tid)
-                if not votes_json:
-                    continue
-                try:
-                    names = json.loads(votes_json)
-                except Exception:
-                    continue
-                if not names:
-                    continue
-                for sname in names:
-                    st = stats.setdefault(sname, dict(DEFAULT_STATS))
-                    st["trades"] += 1
-                    if status == "win":
-                        st["wins"] += 1
-                    else:
-                        st["losses"] += 1
-                    st["pnl"] = round(st["pnl"] + (pnl or 0.0), 2)
-                    wr = (st["wins"] - st["losses"]) / max(st["trades"], 1)
-                    pnl_adj = max(-0.5, min(0.5, st["pnl"] / 40.0))
-                    st["weight"] = round(
-                        max(0.4, min(1.8, 0.5 + wr * 0.35 + pnl_adj * 0.3)), 3)
-                    updated.add(sname)
-            if max_id > last_id:
+                fresh, max_id = aggregate_from_trades(c, e.learning_last_id)
+            if max_id > e.learning_last_id:
                 e.learning_last_id = max_id
+                for name, st in fresh.items():
+                    cur = e.strategy_stats.setdefault(name, dict(DEFAULT_STATS))
+                    cur.update(st)
                 e.persist_learning()
         except Exception:
             pass
 
-        if updated:
-            top = sorted(updated,
-                         key=lambda n: stats[n].get("weight", 1.0),
-                         reverse=True)[:4]
-            self.report(f"🎓 Mësova nga {len(updated)} strategji — "
-                        f"më të forta tani: {', '.join(top)}")
+        # meta: rolling system results for adaptive threshold
+        meta = e.meta_state
+        try:
+            with e._conn() as c:
+                rows = c.execute(
+                    "SELECT pnl FROM trades WHERE status!='open' "
+                    "ORDER BY id DESC LIMIT ?", (META_WINDOW,)).fetchall()
+            results = [r[0] or 0.0 for r in rows][::-1]
+            meta["recent"] = results[-META_WINDOW:]
+            meta["threshold"] = meta_threshold(results)
+            meta["system_win_rate"] = system_win_rate(results)
+        except Exception:
+            pass
+
+        # record learning-curve history point
+        now = time.time()
+        if not e.learning_history or now - e.learning_history[-1]["t"] > 120:
+            weights = [s.get("weight", 1.0)
+                       for s in e.strategy_stats.values()]
+            e.learning_history.append({
+                "t": now,
+                "avg_weight": round(sum(weights) / max(len(weights), 1), 3),
+                "threshold": meta.get("threshold", 0.05),
+                "sys_wr": meta.get("system_win_rate"),
+                "trained": sum(1 for s in e.strategy_stats.values()
+                               if s.get("trades", 0) > 0),
+            })
+            e.learning_history = e.learning_history[-HISTORY_MAX:]
+            save_history(e.learning_history)
+
+        trained = sum(1 for s in e.strategy_stats.values()
+                      if s.get("trades", 0) > 0)
+        if trained:
+            top = sorted(
+                ((n, s.get("weight", 1.0), s.get("trades", 0))
+                 for n, s in e.strategy_stats.items() if s.get("trades", 0) > 0),
+                key=lambda x: x[1], reverse=True)[:3]
+            wr = meta.get("system_win_rate")
+            wr_s = f" · sistemi {wr}%" if wr is not None else ""
+            self.report(
+                f"🎓 {trained}/10 strategji të trajnuara · prag "
+                f"{meta.get('threshold', 0.05):.2f}{wr_s} · më të forta: "
+                f"{', '.join(n for n, _, _ in top)}")
         else:
             self.report("🎓 Në pritje të tregtive për të mësuar")
 
@@ -1641,6 +1836,9 @@ class PaperEngine:
         self.real_balance_cache = (0.0, 0.0)        # (ts, balance)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
+        self.meta_state = {"recent": [], "threshold": 0.05,
+                           "system_win_rate": None}
+        self.learning_history = load_history()      # learning curve points
         # twenty autonomous agents + coordinator (this engine)
         self.agents = [cls(self) for cls in ALL_AGENTS]
         self.pipeline = {
@@ -2161,6 +2359,20 @@ class PaperEngine:
         stats["__last_trade_id"] = self.learning_last_id
         save_weights(stats)
 
+    def learning_status(self):
+        """Rich learning view for the UI."""
+        enriched = enrich(self.strategy_stats)
+        by_weight = sorted(enriched.items(),
+                           key=lambda kv: kv[1].get("weight", 1.0),
+                           reverse=True)
+        return {
+            "strategies": dict(by_weight),
+            "meta": self.meta_state,
+            "history": self.learning_history[-120:],
+            "trained": sum(1 for s in self.strategy_stats.values()
+                           if s.get("trades", 0) > 0),
+        }
+
 
 # ============ main.py ============
 """
@@ -2483,6 +2695,11 @@ async def set_settings(body: dict):
                 "compound": engine.compound}
     return {"ok": True, "auto_trade": engine.auto_trade,
             "compound": engine.compound, "mode": engine.mode}
+
+
+@app.get("/api/learning")
+async def learning():
+    return {"ok": True, "learning": engine.learning_status()}
 
 
 @app.get("/api/real/status")

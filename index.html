@@ -142,6 +142,22 @@
   .btn-green:disabled{opacity:.5}
   .btn-ghost{background:var(--card2);color:var(--mut);border:1px solid var(--line)}
 
+  /* ---------- learning ---------- */
+  .learn-meta{display:flex;gap:8px;margin:2px 0 10px}
+  .lstat{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+    padding:8px;text-align:center}
+  .lstat .n{font-size:14px;font-weight:750}
+  .lstat .l{font-size:9px;color:var(--dim)}
+  .lrow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid rgba(30,42,61,.5)}
+  .lrow:last-child{border-bottom:none}
+  .lrow .li{font-size:14px;width:20px;text-align:center}
+  .lrow .ln{font-size:11px;font-weight:700;width:88px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .lbar{flex:1;height:7px;border-radius:99px;background:#1a2436;overflow:hidden}
+  .lrow .lfill{height:100%;border-radius:99px;background:linear-gradient(90deg,#16a34a,#4ade80)}
+  .lrow .lfill.low{background:linear-gradient(90deg,#ef4444,#f87171)}
+  .lrow .lw{font-size:10px;font-weight:800;width:38px;text-align:right}
+  .lrow .lst{font-size:9px;color:var(--dim);width:118px;text-align:right;white-space:nowrap}
+
   /* ---------- feed ---------- */
   .row{display:flex;align-items:center;justify-content:space-between;padding:10px 2px;
     border-bottom:1px solid rgba(30,42,61,.55)}
@@ -315,6 +331,23 @@
       <canvas id="eqChart"></canvas>
       <div class="chart-foot"><span>24 orët e fundit (historia live)</span><span id="eqGrowth">—</span></div>
     </div>
+    <div class="sec-t">🎓 Mësimi i Agjentëve</div>
+    <div class="card" style="padding:12px">
+      <div class="learn-meta">
+        <div class="lstat"><div class="n bl" id="lTrained">0/10</div><div class="l">strategji të trajnuara</div></div>
+        <div class="lstat"><div class="n" id="lSysWr">—</div><div class="l">win rate i sistemit</div></div>
+        <div class="lstat"><div class="n up" id="lPrag">0.05</div><div class="l">pragu adaptiv</div></div>
+      </div>
+      <canvas id="learnChart" style="height:110px"></canvas>
+      <div class="chart-foot"><span>Kurba e mësimit — pesha mesatare e strategjive</span><span id="learnGrowth">—</span></div>
+      <div id="learnList" style="margin-top:10px"></div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.5;margin-top:8px">
+        🎓 Pas çdo tregtie të mbyllur, strategjitë që votuan drejt <b>fitojnë peshë</b>
+        dhe ato që votuan gabim <b>humbin</b>. Pesha = besimi i botit te strategjia.
+        Kur sistemi fiton, pragu ulet (më i guximshëm); kur humbet, ngrihet (i kujdesshëm).
+      </div>
+    </div>
+
     <div class="sec-t">📊 Performanca</div>
     <div class="tradesum">
       <div class="tsum"><div class="n up" id="tWin">0</div><div class="l">Fitore</div></div>
@@ -813,6 +846,76 @@ function drawEquity(){
   $("eqGrowth").textContent = `Equity ${fmt(last.e)} · ${fmt(growth,3)}x`;
 }
 
+/* ================= learning panel ================= */
+let learnData=null;
+async function refreshLearning(){
+  try{ const d = await jf("/api/learning"); learnData=d.learning; renderLearning(); }
+  catch(e){}
+}
+function renderLearning(){
+  if(!learnData) return;
+  const meta=learnData.meta||{}, sts=learnData.strategies||{};
+  $("lTrained").textContent = learnData.trained+"/10";
+  const wr=meta.system_win_rate;
+  const wrEl=$("lSysWr"); wrEl.textContent = wr==null?"—":wr+"%";
+  wrEl.className = "n "+(wr!=null&&wr>=50?"up":"dn");
+  const th=$("lPrag"); th.textContent = (meta.threshold||0.05).toFixed(2);
+  th.className = "n "+(meta.threshold<=0.05?"up":"dn");
+  // strategy rows
+  const names=Object.keys(sts).sort((a,b)=>(sts[b].weight||1)-(sts[a].weight||1));
+  $("learnList").innerHTML = names.map(n=>{
+    const s=sts[n];
+    const w=s.weight||1;
+    const pct=Math.min(100, Math.round((w-0.35)/(1.7-0.35)*100));
+    const low = w<0.9;
+    return `<div class="lrow">
+      <span class="li">${EMOJI[n]||"📊"}</span>
+      <span class="ln">${n}</span>
+      <span class="lbar"><span class="lfill ${low?"low":""}" style="width:${pct}%"></span></span>
+      <span class="lw ${low?"dn":"up"}">${w.toFixed(2)}x</span>
+      <span class="lst">${s.trades}t · ${s.win_rate||0}% · PF ${s.profit_factor||0}</span>
+    </div>`;
+  }).join("") || '<div class="empty">Ende pa të dhëna — strategjitë mësojnë pas tregtive të para</div>';
+  drawLearnChart();
+}
+function drawLearnChart(){
+  const cv=$("learnChart"); if(!cv) return;
+  const hist=(learnData&&learnData.history)||[];
+  const dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth, H=cv.clientHeight;
+  if(!W||hist.length<2){ return; }
+  cv.width=W*dpr; cv.height=H*dpr;
+  const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
+  const pad=6, vw=W-pad*2, vh=H-pad*2;
+  const vals=hist.map(h=>h.avg_weight||0);
+  const lo=Math.min(0.3, ...vals), hi=Math.max(...vals, 1.0);
+  const xs=i=>pad+i*vw/(hist.length-1);
+  const ys=v=>pad+(1-(v-lo)/(hi-lo))*vh;
+  // fill + line of avg weight
+  const grad=ctx.createLinearGradient(0,pad,0,H-pad);
+  grad.addColorStop(0,"rgba(167,139,250,.4)"); grad.addColorStop(1,"rgba(167,139,250,0)");
+  ctx.beginPath();
+  hist.forEach((h,i)=>{ const x=xs(i),y=ys(h.avg_weight); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.lineTo(xs(hist.length-1),H-pad); ctx.lineTo(xs(0),H-pad); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.beginPath();
+  hist.forEach((h,i)=>{ const x=xs(i),y=ys(h.avg_weight); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.strokeStyle="#a78bfa"; ctx.lineWidth=1.6; ctx.stroke();
+  // threshold line (dashed)
+  ctx.strokeStyle="rgba(56,189,248,.6)"; ctx.setLineDash([3,3]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(pad,ys(0.05)); ctx.lineTo(W-pad,ys(0.05)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle="#5b6b80"; ctx.font="8.5px monospace"; ctx.textAlign="right";
+  ctx.fillText("prag 0.05",W-pad,ys(0.05)-2);
+  const last=hist[hist.length-1];
+  $("learnGrowth").textContent = `pesha mesatare ${last.avg_weight.toFixed(2)}x · ${hist.length} pikë`;
+}
+const EMOJI={"EMA Trend":"📈","RSI Reversal":"🔄","MACD Momentum":"🌊","Bollinger Break":"🎈",
+  "Stochastic":"⚡","Volume Spike":"🔊","ATR Channel":"📏","Donchian Break":"🚀",
+  "ROC Momentum":"🏎️","Slow Trend":"🐢"};
+
 /* ================= render: feed ================= */
 function renderTickers(){
   if(!S.tickers.length) return;
@@ -896,7 +999,7 @@ document.querySelectorAll(".ni").forEach(ni=>{
     $("tab-"+tab).classList.add("on");
     S.tab=tab;
     if(tab==="feed"){ refreshTickers(); refreshEvents(); }
-    if(tab==="trades"){ refreshTrades(); refreshEquity(); setTimeout(drawEquity,60); }
+    if(tab==="trades"){ refreshTrades(); refreshEquity(); refreshLearning(); setTimeout(drawEquity,60); setTimeout(drawLearnChart,60); }
     if(tab==="home"){ setTimeout(drawChart,60); }
     if(tab==="settings"){ loadAISettings(); }
   });
@@ -1013,7 +1116,7 @@ async function saveAI(){
   b.disabled=false; b.textContent="💾 Ruaj cilësimet e AI";
 }
 
-function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); }
+function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); refreshLearning(); }
 
 /* ================= boot ================= */
 buildChips();
@@ -1023,7 +1126,7 @@ setInterval(refreshStatus, 4000);
 setInterval(refreshEvents, 5000);
 setInterval(refreshTrades, 8000);
 setInterval(refreshTickers, 10000);
-setInterval(()=>{ if(!document.hidden && S.tab==="trades") refreshEquity(); }, 15000);
+setInterval(()=>{ if(!document.hidden && S.tab==="trades"){ refreshEquity(); refreshLearning(); } }, 15000);
 setInterval(()=>{ if(document.hidden===false && S.tab==="home") refreshKlines(); }, 20000);
 window.addEventListener("resize", drawChart);
 wsConnect();

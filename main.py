@@ -323,6 +323,11 @@ async def set_settings(body: dict):
             "compound": engine.compound, "mode": engine.mode}
 
 
+@app.get("/api/learning")
+async def learning():
+    return {"ok": True, "learning": engine.learning_status()}
+
+
 @app.get("/api/real/status")
 async def real_status():
     try:
