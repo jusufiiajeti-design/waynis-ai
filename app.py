@@ -1651,8 +1651,8 @@ class ConsensusAgent(Agent):
                     continue
                 roc10 = (closes[-1] - closes[-11]) / closes[-11] * 100 if closes[-11] else 0
                 chg24 = (ctx.tickers.get(sym) or {}).get("chg24") or 0.0
-                e9 = strat_ema(closes, 9)[-1]
-                e21 = strat_ema(closes, 21)[-1]
+                e9 = ema(closes, 9)[-1]
+                e21 = ema(closes, 21)[-1]
                 trend = 1.0 if e9 > e21 else -1.0
                 scores[sym] = roc10 * 0.5 + chg24 * 0.3 + trend * 0.2
             except Exception:
@@ -1848,8 +1848,8 @@ class ValidatorAgent(Agent):
             e.mtf_cache[symbol] = (now, closes)
         if len(closes) < MTF_SLOW + 2:
             return True, "MTF nuk disponohet — kalon"
-        fast = strat_ema(closes, MTF_FAST)[-1]
-        slow = strat_ema(closes, MTF_SLOW)[-1]
+        fast = ema(closes, MTF_FAST)[-1]
+        slow = ema(closes, MTF_SLOW)[-1]
         if direction == "LONG" and fast > slow:
             return True, f"trendi {MTF_BAR} konfirmon (EMA{MTF_FAST}>{MTF_SLOW})"
         if direction == "SHORT" and fast < slow:
