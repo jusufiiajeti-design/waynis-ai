@@ -415,6 +415,21 @@
       </p>
       <div id="dcaStatus" style="font-size:12px;color:var(--mut);line-height:1.7;margin-bottom:10px">—</div>
       <button class="btn btn-ghost" id="btnDca" style="width:100%" onclick="toggleDca()">📈 Aktivizo DCA</button>
+      <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+        <div style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:8px">
+          <b>Provë historike e DCA-së</b> — çfarë do të kishte dhënë blerja e rregullt
+          vitin e fundit (krahasuar me blerjen njëherësh):
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <select id="dcaBtSym" class="sel" style="max-width:45%">
+            <option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option>
+            <option>XRP-USDT</option><option>BNB-USDT</option>
+          </select>
+          <input type="number" id="dcaBtAmt" value="5" min="1" class="inp" style="width:64px">
+          <button class="btn btn-green" id="btnDcaBt" style="padding:8px" onclick="runDcaBacktest()">Provo</button>
+        </div>
+        <div id="dcaBtResult" style="font-size:12px;line-height:1.7"></div>
+      </div>
     </div>
 
     <div class="sec-t">🧾 Historiku i tregtive</div>
@@ -1058,6 +1073,30 @@ async function saveDcaSettings(){
     renderDca(d.dca);
     toast("✅ Cilësimet DCA u ruajtën");
   }catch(e){}
+}
+
+async function runDcaBacktest(){
+  const b=$("btnDcaBt"); b.disabled=true; b.textContent="⏳…";
+  const sym=$("dcaBtSym").value||"BTC-USDT";
+  const amt=parseFloat($("dcaBtAmt").value)||5;
+  $("dcaBtResult").innerHTML='<span class="ai-thinking">📈 Duke tërhequr 1 vit të dhëna për '+sym+'…</span>';
+  try{
+    const d=await jf(`/api/dca/backtest?symbol=${sym}&amount=${amt}&interval_days=1&days=365`);
+    const r=d.result;
+    if(r.error){ $("dcaBtResult").innerHTML='<span style="color:var(--red)">'+r.error+'</span>'; return; }
+    const ok=r.pnl_pct>=0;
+    const dcaBetter=r.pnl_pct>r.lump_pnl_pct;
+    $("dcaBtResult").innerHTML =
+      `<b>${r.symbol} · ${r.buys} blerje (${r.period_days} ditë, $${amt}/ditë)</b><br>
+       Investuar: <b>$${r.total_invested}</b> → Vlera sot: <b>$${r.value}</b><br>
+       📈 <b>DCA:</b> <b style="color:${ok?'var(--green)':'var(--red)'}">${r.pnl_pct>0?'+':''}${r.pnl_pct}%</b> (${r.pnl>0?'+':''}$${r.pnl})<br>
+       💰 Blerja njëherësh: <b style="color:${r.lump_pnl_pct>=0?'var(--green)':'var(--red)'}">${r.lump_pnl_pct>0?'+':''}${r.lump_pnl_pct}%</b><br>
+       Çmimi mesatar i blerjes: <b>$${r.avg_cost}</b> vs çmimi sot: <b>$${r.last_price}</b><br>
+       <span style="color:var(--dim);font-size:11px">${dcaBetter?"✅ DCA doli MË MIRË se blerja njëherësh — e zvogëloi humbjen/rrezikun":"ℹ️ Këtë vit, DCA doli më keq se blerja njëherësh (treg rritës i hershëm) — por më pak i rrezikshëm"} · Viti i fundit: ${r.period_days} ditë me çmime reale</span>`;
+  }catch(e){
+    $("dcaBtResult").innerHTML='<span style="color:var(--red)">Gabim — provo sërish</span>';
+  }
+  b.disabled=false; b.textContent="Provo";
 }
 
 /* ================= learning panel ================= */

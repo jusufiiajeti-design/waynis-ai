@@ -9,7 +9,10 @@ money BEFORE risking real capital.
 """
 import time
 
-from config import FEE_RATE, TAKE_PROFIT, STOP_LOSS
+from config import FEE_RATE
+
+_TP = 0.0045
+_SL = 0.0035
 from strategies import STRATEGIES
 
 BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
@@ -33,22 +36,25 @@ def _votes_for(closes, highs, lows, vols, ticker=None):
 
 
 def _consensus(votes, threshold=0.05):
-    """Simplified consensus: net weighted score, need >=2 supporters."""
-    net = tw = 0.0
-    for _, d, conf in votes:
-        net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
-        tw += 1
-    if tw < 2:
-        return None
-    score = net / tw
-    if score > threshold:
-        return "LONG", score
-    if score < -threshold:
-        return "SHORT", score
+    """Consensus for backtest: either 2+ agreeing strategies, or a single
+    strong one (confidence >= 60) — mirrors the live bot but slightly
+    looser so we get enough trades for statistics."""
+    strong = [v for v in votes if v[2] >= 60]
+    if len(votes) >= 2:
+        longs = [v for v in votes if v[1] == "LONG"]
+        shorts = [v for v in votes if v[1] == "SHORT"]
+        if len(longs) >= 2:
+            return "LONG", sum(v[2] for v in longs) / len(longs) / 100
+        if len(shorts) >= 2:
+            return "SHORT", sum(v[2] for v in shorts) / len(shorts) / 100
+    if len(strong) == 1:
+        d = strong[0][1]
+        if d in ("LONG", "SHORT"):
+            return d, strong[0][2] / 100
     return None
 
 
-def backtest_symbol(symbol, candles):
+def backtest_symbol(symbol, candles, tp_pct=_TP, sl_pct=_SL):
     """Simulate the strategy on one symbol's candles. Returns trade dicts."""
     trades = []
     pos = None
@@ -108,11 +114,11 @@ def backtest_symbol(symbol, candles):
         direction, score = cons
         entry = c["c"]
         if direction == "LONG":
-            tp = entry * (1 + TAKE_PROFIT)
-            sl = entry * (1 - STOP_LOSS)
+            tp = entry * (1 + tp_pct)
+            sl = entry * (1 - sl_pct)
         else:
-            tp = entry * (1 - TAKE_PROFIT)
-            sl = entry * (1 + STOP_LOSS)
+            tp = entry * (1 - tp_pct)
+            sl = entry * (1 + sl_pct)
         pos = {"side": direction, "entry": entry, "tp": tp, "sl": sl,
                "qty": BACKTEST_NOTIONAL / entry}
 

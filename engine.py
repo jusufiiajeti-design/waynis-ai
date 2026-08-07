@@ -403,6 +403,48 @@ class PaperEngine:
         except Exception as e:
             self._event("error", f"DCA: {str(e)[:80]}")
 
+    async def dca_backtest(self, symbol=None, amount=5.0, interval_days=1.0,
+                           days=365):
+        """Simulate DCA over the last N days using REAL daily candles.
+        Shows what periodic buying would have returned."""
+        symbol = symbol or self.dca_symbol
+        candles = await self.market.fetch_klines_history(symbol, "1d", days + 10)
+        if len(candles) < 30:
+            return {"error": "Të dhëna të pamjaftueshme"}
+        buys = []
+        step = max(1, int(round(interval_days)))
+        for i in range(0, len(candles), step):
+            c = candles[i]
+            buys.append({"ts": c["t"], "price": c["c"], "qty": amount / c["c"]})
+        if not buys:
+            return {"error": "Asnjë blerje"}
+        total_invested = amount * len(buys)
+        total_qty = sum(b["qty"] for b in buys)
+        last_price = candles[-1]["c"]
+        value = total_qty * last_price
+        pnl = value - total_invested
+        pnl_pct = pnl / total_invested * 100 if total_invested else 0
+        first_price = buys[0]["price"]
+        lump_value = (total_invested / first_price) * last_price
+        lump_pnl = lump_value - total_invested
+        avg_cost = total_invested / total_qty
+        return {
+            "symbol": symbol,
+            "buys": len(buys),
+            "amount_per_buy": amount,
+            "interval_days": interval_days,
+            "period_days": round((candles[-1]["t"] - candles[0]["t"]) / 86400000, 1),
+            "total_invested": round(total_invested, 2),
+            "total_qty": round(total_qty, 8),
+            "avg_cost": round(avg_cost, 4),
+            "last_price": round(last_price, 4),
+            "value": round(value, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "lump_pnl": round(lump_pnl, 2),
+            "lump_pnl_pct": round((lump_value - total_invested) / total_invested * 100, 2),
+        }
+
     # ------------------------------------------------------------------
     # Mode (paper / real)
     # ------------------------------------------------------------------

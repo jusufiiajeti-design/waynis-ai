@@ -372,6 +372,13 @@ async def dca_status():
     return {"ok": True, "dca": engine.dca_status()}
 
 
+@app.get("/api/dca/backtest")
+async def dca_backtest(symbol: str = "BTC-USDT", amount: float = 5.0,
+                       interval_days: float = 1.0, days: int = 365):
+    r = await engine.dca_backtest(symbol, amount, interval_days, days)
+    return {"ok": True, "result": r}
+
+
 @app.post("/api/dca/settings")
 async def dca_settings(body: dict):
     info = engine.dca_set(

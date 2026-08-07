@@ -1241,6 +1241,9 @@ money BEFORE risking real capital.
 import time
 
 
+_TP = 0.0045
+_SL = 0.0035
+
 BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
 WARMUP = 40                     # candles used to warm indicators
 MAX_OPEN_PER_SYMBOL = 1
@@ -1262,22 +1265,25 @@ def _votes_for(closes, highs, lows, vols, ticker=None):
 
 
 def _consensus(votes, threshold=0.05):
-    """Simplified consensus: net weighted score, need >=2 supporters."""
-    net = tw = 0.0
-    for _, d, conf in votes:
-        net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
-        tw += 1
-    if tw < 2:
-        return None
-    score = net / tw
-    if score > threshold:
-        return "LONG", score
-    if score < -threshold:
-        return "SHORT", score
+    """Consensus for backtest: either 2+ agreeing strategies, or a single
+    strong one (confidence >= 60) — mirrors the live bot but slightly
+    looser so we get enough trades for statistics."""
+    strong = [v for v in votes if v[2] >= 60]
+    if len(votes) >= 2:
+        longs = [v for v in votes if v[1] == "LONG"]
+        shorts = [v for v in votes if v[1] == "SHORT"]
+        if len(longs) >= 2:
+            return "LONG", sum(v[2] for v in longs) / len(longs) / 100
+        if len(shorts) >= 2:
+            return "SHORT", sum(v[2] for v in shorts) / len(shorts) / 100
+    if len(strong) == 1:
+        d = strong[0][1]
+        if d in ("LONG", "SHORT"):
+            return d, strong[0][2] / 100
     return None
 
 
-def backtest_symbol(symbol, candles):
+def backtest_symbol(symbol, candles, tp_pct=_TP, sl_pct=_SL):
     """Simulate the strategy on one symbol's candles. Returns trade dicts."""
     trades = []
     pos = None
@@ -1337,11 +1343,11 @@ def backtest_symbol(symbol, candles):
         direction, score = cons
         entry = c["c"]
         if direction == "LONG":
-            tp = entry * (1 + TAKE_PROFIT)
-            sl = entry * (1 - STOP_LOSS)
+            tp = entry * (1 + tp_pct)
+            sl = entry * (1 - sl_pct)
         else:
-            tp = entry * (1 - TAKE_PROFIT)
-            sl = entry * (1 + STOP_LOSS)
+            tp = entry * (1 - tp_pct)
+            sl = entry * (1 + sl_pct)
         pos = {"side": direction, "entry": entry, "tp": tp, "sl": sl,
                "qty": BACKTEST_NOTIONAL / entry}
 
@@ -2542,6 +2548,48 @@ class PaperEngine:
         except Exception as e:
             self._event("error", f"DCA: {str(e)[:80]}")
 
+    async def dca_backtest(self, symbol=None, amount=5.0, interval_days=1.0,
+                           days=365):
+        """Simulate DCA over the last N days using REAL daily candles.
+        Shows what periodic buying would have returned."""
+        symbol = symbol or self.dca_symbol
+        candles = await self.market.fetch_klines_history(symbol, "1d", days + 10)
+        if len(candles) < 30:
+            return {"error": "Të dhëna të pamjaftueshme"}
+        buys = []
+        step = max(1, int(round(interval_days)))
+        for i in range(0, len(candles), step):
+            c = candles[i]
+            buys.append({"ts": c["t"], "price": c["c"], "qty": amount / c["c"]})
+        if not buys:
+            return {"error": "Asnjë blerje"}
+        total_invested = amount * len(buys)
+        total_qty = sum(b["qty"] for b in buys)
+        last_price = candles[-1]["c"]
+        value = total_qty * last_price
+        pnl = value - total_invested
+        pnl_pct = pnl / total_invested * 100 if total_invested else 0
+        first_price = buys[0]["price"]
+        lump_value = (total_invested / first_price) * last_price
+        lump_pnl = lump_value - total_invested
+        avg_cost = total_invested / total_qty
+        return {
+            "symbol": symbol,
+            "buys": len(buys),
+            "amount_per_buy": amount,
+            "interval_days": interval_days,
+            "period_days": round((candles[-1]["t"] - candles[0]["t"]) / 86400000, 1),
+            "total_invested": round(total_invested, 2),
+            "total_qty": round(total_qty, 8),
+            "avg_cost": round(avg_cost, 4),
+            "last_price": round(last_price, 4),
+            "value": round(value, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "lump_pnl": round(lump_pnl, 2),
+            "lump_pnl_pct": round((lump_value - total_invested) / total_invested * 100, 2),
+        }
+
     # ------------------------------------------------------------------
     # Mode (paper / real)
     # ------------------------------------------------------------------
@@ -3373,6 +3421,13 @@ async def backtest_run(symbols: str = "BTC-USDT,ETH-USDT,SOL-USDT,BNB-USDT,XRP-U
 @app.get("/api/dca")
 async def dca_status():
     return {"ok": True, "dca": engine.dca_status()}
+
+
+@app.get("/api/dca/backtest")
+async def dca_backtest(symbol: str = "BTC-USDT", amount: float = 5.0,
+                       interval_days: float = 1.0, days: int = 365):
+    r = await engine.dca_backtest(symbol, amount, interval_days, days)
+    return {"ok": True, "result": r}
 
 
 @app.post("/api/dca/settings")
