@@ -137,6 +137,7 @@ class ScannerAgent(Agent):
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
+                e.scan_count += 1          # 🔢 charts analysed
             await asyncio.sleep(0.04)
 
         if not scanned:

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from providers import MarketData, WATCHLIST
 from engine import PaperEngine, CYCLE_SECONDS
-from config import FEE_RATE
+from config import FEE_RATE, SCAN_BATCH
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = BASE          # files live at project root (flat, phone-friendly deploy)
@@ -238,6 +238,12 @@ async def status():
         "lock": engine.lock_info(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
+        "session": {
+            "started_at": engine.started_at,
+            "scan_count": engine.scan_count,
+            "watchlist_size": len(WATCHLIST),
+            "scanned_per_cycle": SCAN_BATCH,
+        },
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,

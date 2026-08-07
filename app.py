@@ -3,7 +3,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 8                  # symbols scanned per cycle
+SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
@@ -83,6 +83,15 @@ WATCHLIST = [
     ("SUI-USDT", None, None),
     ("DOT-USDT", None, "DOTUSD"),
     ("PEPE-USDT", None, None),
+    # extra scanning coverage (all verified live on OKX)
+    ("NEAR-USDT", None, None),
+    ("APT-USDT", None, None),
+    ("ARB-USDT", None, None),
+    ("OP-USDT", None, None),
+    ("INJ-USDT", None, None),
+    ("LTC-USDT", None, None),
+    ("TRX-USDT", None, None),
+    ("UNI-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
@@ -1516,6 +1525,7 @@ class ScannerAgent(Agent):
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
+                e.scan_count += 1          # 🔢 charts analysed
             await asyncio.sleep(0.04)
 
         if not scanned:
@@ -2209,6 +2219,8 @@ class PaperEngine:
         self.running = True
         self.auto_trade = True
         self.compound = True          # COMPOUND sizing by default
+        self.started_at = time.time() # session start (big timer in UI)
+        self.scan_count = 0           # charts analysed by the agents
         settings = _load_settings()
         self.mode = settings.get("mode", "paper")   # "paper" | "real"
         self.exchange = get_exchange()              # real-money client
@@ -3229,6 +3241,12 @@ async def status():
         "lock": engine.lock_info(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
+        "session": {
+            "started_at": engine.started_at,
+            "scan_count": engine.scan_count,
+            "watchlist_size": len(WATCHLIST),
+            "scanned_per_cycle": SCAN_BATCH,
+        },
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,

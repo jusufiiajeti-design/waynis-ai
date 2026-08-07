@@ -80,6 +80,8 @@ class PaperEngine:
         self.running = True
         self.auto_trade = True
         self.compound = True          # COMPOUND sizing by default
+        self.started_at = time.time() # session start (big timer in UI)
+        self.scan_count = 0           # charts analysed by the agents
         settings = _load_settings()
         self.mode = settings.get("mode", "paper")   # "paper" | "real"
         self.exchange = get_exchange()              # real-money client

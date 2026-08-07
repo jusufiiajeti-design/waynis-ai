@@ -17,6 +17,20 @@
     --green:#22c55e; --green2:#16a34a; --red:#ef4444; --blue:#38bdf8;
     --amber:#fbbf24; --purple:#a78bfa;
   }
+  /* ---------- light theme (like the IG post) ---------- */
+  body.light{
+    --bg:#f4f6f9; --card:#ffffff; --card2:#eef1f6; --line:#dfe4ec;
+    --txt:#111827; --mut:#4b5563; --dim:#9aa3b2;
+    --green:#16a34a; --green2:#15803d; --red:#dc2626; --blue:#0284c7;
+    --amber:#d97706; --purple:#7c3aed;
+  }
+  body.light header{background:rgba(244,246,249,.92)}
+  body.light nav{background:rgba(244,246,249,.96)}
+  body.light canvas{background:#ffffff}
+  body.light .hero{background:linear-gradient(140deg,#d9f2e3 0%,#dbeafe 55%,#eef2f7 100%)}
+  body.light .pstep .ic,body.light .conf-bar,body.light .lrow .lbar{background:#e2e8f0}
+  body.light .ag{background:#fff}
+  body.light .lrow .lfill.low{background:linear-gradient(90deg,#ef4444,#f87171)}
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{background:var(--bg);color:var(--txt);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
@@ -63,6 +77,16 @@
   .hero .made small{font-size:12px;color:var(--mut);font-weight:500;letter-spacing:0}
   .hero .sub{margin-top:4px;font-size:12.5px;color:var(--mut)}
   .hero .sub b{color:var(--green)}
+  .hero-grid{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+  .hero-main{flex:1;min-width:180px}
+  .hero-side{display:flex;gap:12px}
+  .hstat{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);
+    border-radius:12px;padding:8px 12px;text-align:center;min-width:86px}
+  body.light .hstat{background:rgba(255,255,255,.65);border-color:rgba(0,0,0,.08)}
+  .hstat .hl{display:block;font-size:8px;color:var(--mut);letter-spacing:.8px;font-weight:700}
+  .hstat .hv{display:block;font-size:17px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums}
+  .hero-foot{margin-top:10px;font-size:12px;color:var(--mut)}
+  .hero-foot b{color:var(--green)}
 
   /* ---------- stats ---------- */
   .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
@@ -267,9 +291,17 @@
     <div class="hero">
       <div class="glow"></div>
       <div class="tag" id="heroTag">⚡ AI TRADING ENGINE · PAPER MODE</div>
-      <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span><br>
-        <small>të fituara që nga fillimi</small></div>
-      <div class="sub">Sot: <b id="todayVal">+0.00 USDT</b> · Equity: <span id="eqVal">—</span></div>
+      <div class="hero-grid">
+        <div class="hero-main">
+          <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span></div>
+          <div class="sub">të fituara që nga fillimi · Equity: <span id="eqVal">—</span></div>
+        </div>
+        <div class="hero-side">
+          <div class="hstat"><span class="hl" id="scanLbl">GRAFIKË TË SKANUAR</span><span class="hv" id="scanVal">0</span></div>
+          <div class="hstat"><span class="hl">SESIONI</span><span class="hv" id="sessTimer">00:00:00</span></div>
+        </div>
+      </div>
+      <div class="hero-foot">Sot: <b id="todayVal">+0.00 USDT</b> · <span id="sessMeta">—</span></div>
     </div>
 
     <div class="stats">
@@ -394,6 +426,10 @@
   <section class="tab" id="tab-settings">
     <div class="sec-t">⚙️ Kontrolli i botit</div>
     <div class="card" style="padding:4px 12px">
+      <div class="set">
+        <div><div class="l">🌗 Tema</div><div class="d">Errët ose e lehtë (si postimi i Instagramit)</div></div>
+        <div class="switch" id="swTheme" onclick="toggleTheme()"></div>
+      </div>
       <div class="set">
         <div><div class="l">Auto-trading</div><div class="d">Boti ekzekuton vetë ciklet 6-Cycle</div></div>
         <div class="switch on" id="swAuto" onclick="toggleAuto()"></div>
@@ -619,9 +655,37 @@ const S = {
   status:null, tickers:[], candles:[], trades:[], events:[],
   symbol:"BTC-USDT", interval:"1m", tab:"home", lastCycleMsg:""
 };
-const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT"];
+const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT","NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","INJ-USDT","LTC-USDT","TRX-USDT","UNI-USDT"];
 const TFS = ["1m","5m","15m","1h","4h","1d"];
 const $ = id => document.getElementById(id);
+
+/* ================= theme ================= */
+function applyTheme(light){
+  document.body.classList.toggle("light", light);
+  const sw=$("swTheme"); if(sw) sw.classList.toggle("on", light);
+  localStorage.setItem("waynis_theme", light?"light":"dark");
+  setTimeout(()=>{ drawChart(); drawEquity(); drawLearnChart(); }, 50);
+}
+function initTheme(){
+  const saved = localStorage.getItem("waynis_theme");
+  applyTheme(saved==="light");
+}
+function toggleTheme(){
+  applyTheme(!document.body.classList.contains("light"));
+  toast(document.body.classList.contains("light")?"🌗 Tema e lehtë":"🌗 Tema e errët");
+}
+
+/* ================= session timer + scan counter ================= */
+let sessStart=0;
+function tickSession(){
+  if(!sessStart) return;
+  let s=Math.max(0, Math.floor((Date.now()/1000 - sessStart)));
+  const hh=String(Math.floor(s/3600)).padStart(2,"0");
+  const mm=String(Math.floor((s%3600)/60)).padStart(2,"0");
+  const ss=String(s%60).padStart(2,"0");
+  const el=$("sessTimer"); if(el) el.textContent=`${hh}:${mm}:${ss}`;
+}
+setInterval(tickSession, 1000);
 
 /* ================= helpers ================= */
 const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -701,6 +765,13 @@ function renderStatus(){
       `Çelësat: ${r.configured?"✅ të konfiguruar":"❌ MUNGON konfigurimi — vendos BINANCE_API_KEY/SECRET te Render → Environment"}`+
       (r.configured?`<br>Maks pozicione: <b>${r.max_positions}</b> · Maks/urdhër: <b>${Math.round(r.max_notional_pct*100)}%</b> e balancës`:"");
   }
+  // session stats (big timer + scanned charts)
+  const ss = S.status.session||{};
+  sessStart = (ss.started_at||Date.now()/1000);
+  const sc = $("scanVal"); if(sc){ sc.textContent = ss.scan_count!=null ? fmt(ss.scan_count,0) : "0"; }
+  const sm = $("sessMeta");
+  if(sm) sm.textContent = `${ss.watchlist_size||20} monedha · skanon ${ss.scanned_per_cycle||12} çdo cikël · ${ss.scan_count!=null?fmt(ss.scan_count,0):0} analiza gjithsej`;
+  tickSession();
   // 🔒 profit lock state
   const lk = S.status.lock||{};
   $("swLock").classList.toggle("on", !!lk.enabled);
@@ -795,6 +866,11 @@ function renderAIBox(st){
 }
 
 /* ================= chart ================= */
+const isLight = () => document.body.classList.contains("light");
+const C_BG   = () => isLight() ? "#ffffff" : "#0c111b";
+const C_GRID = () => isLight() ? "#e5e9f0" : "#182238";
+const C_TXT  = () => isLight() ? "#94a3b8" : "#5b6b80";
+const C_TXT2 = () => isLight() ? "#cbd5e1" : "#2a3b55";
 let chartCtx=null;
 function drawChart(){
   const cv=$("chart"); if(!cv) return;
@@ -804,8 +880,8 @@ function drawChart(){
   cv.width=W*dpr; cv.height=H*dpr;
   const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr); chartCtx=ctx;
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
-  const C=S.candles; if(!C||C.length<2){ ctx.fillStyle="#5b6b80"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke ngarkuar tregun…",W/2,H/2); return; }
+  ctx.fillStyle=C_BG(); ctx.fillRect(0,0,W,H);
+  const C=S.candles; if(!C||C.length<2){ ctx.fillStyle=C_TXT(); ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke ngarkuar tregun…",W/2,H/2); return; }
 
   const padR=56, padB=58, padT=10, padL=6;
   const vh=H-padT-padB, vw=W-padL-padR;
@@ -817,7 +893,7 @@ function drawChart(){
   const volMax=Math.max(...C.map(c=>c.v),1e-9);
 
   // grid + y labels
-  ctx.strokeStyle="#182238"; ctx.fillStyle="#5b6b80"; ctx.font="10px monospace"; ctx.textAlign="left";
+  ctx.strokeStyle=C_GRID(); ctx.fillStyle=C_TXT(); ctx.font="10px monospace"; ctx.textAlign="left";
   for(let g=0;g<=4;g++){
     const y=padT+g*vh/4, v=max-g*range/4;
     ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
@@ -889,9 +965,9 @@ function drawEquity(){
   cv.width=W*dpr; cv.height=H*dpr;
   const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=C_BG(); ctx.fillRect(0,0,W,H);
   const pts=eqHistory.filter(p=>p.e>0);
-  if(pts.length<2){ ctx.fillStyle="#5b6b80"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke mbledhur të dhënat…",W/2,H/2); return; }
+  if(pts.length<2){ ctx.fillStyle=C_TXT(); ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText("Duke mbledhur të dhënat…",W/2,H/2); return; }
   const padL=8,padR=10,padT=12,padB=20;
   const vw=W-padL-padR, vh=H-padT-padB;
   const vals=pts.map(p=>p.e);
@@ -901,10 +977,10 @@ function drawEquity(){
   const ys=v=>padT+(1-(v-min)/range)*vh;
   // baseline = starting balance
   const start=10000;
-  ctx.strokeStyle="#2a3b55"; ctx.setLineDash([5,4]);
+  ctx.strokeStyle=C_TXT2(); ctx.setLineDash([5,4]);
   ctx.beginPath(); ctx.moveTo(padL,ys(start)); ctx.lineTo(W-padR,ys(start)); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle="#5b6b80"; ctx.font="9.5px monospace"; ctx.textAlign="right";
+  ctx.fillStyle=C_TXT(); ctx.font="9.5px monospace"; ctx.textAlign="right";
   ctx.fillText("10k fillim",W-padR,ys(start)-3);
   // gradient area + line
   const grad=ctx.createLinearGradient(0,padT,0,H-padB);
@@ -1025,7 +1101,7 @@ function drawLearnChart(){
   cv.width=W*dpr; cv.height=H*dpr;
   const ctx=cv.getContext("2d"); ctx.scale(dpr,dpr);
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle="#0c111b"; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=C_BG(); ctx.fillRect(0,0,W,H);
   const pad=6, vw=W-pad*2, vh=H-pad*2;
   const vals=hist.map(h=>h.avg_weight||0);
   const lo=Math.min(0.3, ...vals), hi=Math.max(...vals, 1.0);
@@ -1045,7 +1121,7 @@ function drawLearnChart(){
   ctx.strokeStyle="rgba(56,189,248,.6)"; ctx.setLineDash([3,3]); ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(pad,ys(0.05)); ctx.lineTo(W-pad,ys(0.05)); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle="#5b6b80"; ctx.font="8.5px monospace"; ctx.textAlign="right";
+  ctx.fillStyle=C_TXT(); ctx.font="8.5px monospace"; ctx.textAlign="right";
   ctx.fillText("prag 0.05",W-pad,ys(0.05)-2);
   const last=hist[hist.length-1];
   $("learnGrowth").textContent = `pesha mesatare ${last.avg_weight.toFixed(2)}x · ${hist.length} pikë`;
@@ -1280,6 +1356,7 @@ async function saveAI(){
 function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); refreshLearning(); refreshDca(); }
 
 /* ================= boot ================= */
+initTheme();
 buildChips();
 refreshAll();
 loadAISettings();

@@ -28,6 +28,15 @@ WATCHLIST = [
     ("SUI-USDT", None, None),
     ("DOT-USDT", None, "DOTUSD"),
     ("PEPE-USDT", None, None),
+    # extra scanning coverage (all verified live on OKX)
+    ("NEAR-USDT", None, None),
+    ("APT-USDT", None, None),
+    ("ARB-USDT", None, None),
+    ("OP-USDT", None, None),
+    ("INJ-USDT", None, None),
+    ("LTC-USDT", None, None),
+    ("TRX-USDT", None, None),
+    ("UNI-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
