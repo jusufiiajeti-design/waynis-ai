@@ -1642,7 +1642,12 @@ class SizerAgent(Agent):
         equity = e.account()["equity"]
         base = equity if e.compound else STARTING_BALANCE
         mode = "KOMPONIM" if e.compound else "FIKS"
-        stop_dist = abs(entry - sig.get("sl", entry * 0.9965))
+        # stop distance depends on direction (SHORT SL is ABOVE entry)
+        sl = sig.get("sl")
+        if sl is None:
+            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
+                else entry * (1 + STOP_LOSS)
+        stop_dist = abs(entry - sl)
         risk_amount = base * TRADE_RISK
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
         if qty * entry > equity * 0.35:
@@ -1668,10 +1673,13 @@ class FillerAgent(Agent):
             ctx.stop = True
             return
 
-        tp = sig.get("entry", 0) * (1 + TAKE_PROFIT)
-        sl = sig.get("entry", 0) * (1 - STOP_LOSS)
-        sig["tp"] = tp
-        sig["sl"] = sl
+        entry = sig.get("entry", 0)
+        if sig["direction"] == "LONG":
+            sig["tp"] = entry * (1 + TAKE_PROFIT)
+            sig["sl"] = entry * (1 - STOP_LOSS)
+        else:
+            sig["tp"] = entry * (1 - TAKE_PROFIT)
+            sig["sl"] = entry * (1 + STOP_LOSS)
 
         if e.mode == "real":
             ctx.trade_id = await e.real_open(sig, ctx.qty)
