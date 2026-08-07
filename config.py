@@ -35,3 +35,17 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 📈 DCA (dollar-cost averaging) mode ----
+DCA_ENABLED = False              # off until user turns it on
+DCA_AMOUNT = 5.0                 # USDT per buy
+DCA_INTERVAL_MIN = 60            # buy every N minutes
+DCA_SYMBOL = "BTC-USDT"
+
+# ---- 🎯 Multi-timeframe confirmation ----
+MTF_ENABLED = True               # confirm 1m signal with 15m trend
+MTF_BAR = "15m"
+MTF_FAST = 20                    # EMA fast period on MTF
+MTF_SLOW = 50                    # EMA slow period on MTF
+MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
+
+

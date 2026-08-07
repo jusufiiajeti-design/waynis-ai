@@ -193,6 +193,50 @@ class MarketData:
                 pass
         return []
 
+    async def fetch_klines_history(self, okx_symbol: str, interval: str = "1h",
+                                   limit: int = 900) -> list:
+        """Historical klines via OKX pagination (oldest -> newest).
+        Used by the backtest engine."""
+        bar = OKX_BAR.get(interval, "1H")
+        out = []
+        seen = set()
+        after = None
+        page = 100                         # OKX history-candles caps at 100
+        try:
+            while len(out) < limit:
+                url = (f"https://www.okx.com/api/v5/market/history-candles"
+                       f"?instId={okx_symbol}&bar={bar}&limit={page}")
+                if after:
+                    url += f"&after={after}"
+                data = await _http_json_async(url)
+                if not data.get("code") == "0":
+                    break
+                rows = data.get("data") or []
+                if not rows:
+                    break
+                batch = []
+                for r in rows:
+                    t = int(_safe_float(r[0]))
+                    c = _safe_float(r[4])
+                    if t in seen or c <= 0:
+                        continue
+                    seen.add(t)
+                    batch.append({
+                        "t": t, "o": _safe_float(r[1]),
+                        "h": _safe_float(r[2]), "l": _safe_float(r[3]),
+                        "c": c, "v": _safe_float(r[5]),
+                    })
+                if not batch:
+                    break
+                out.extend(batch)
+                after = batch[-1]["t"]      # oldest of this batch -> next page
+                if len(batch) < page:
+                    break
+        except Exception:
+            pass
+        out.sort(key=lambda x: x["t"])
+        return out[:limit]
+
     @staticmethod
     def _cb_symbol(okx_sym):
         for okx, cb, _ in WATCHLIST:

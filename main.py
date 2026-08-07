@@ -236,6 +236,8 @@ async def status():
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
+        "dca": engine.dca_status(),
+        "mtf_enabled": True,
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -332,6 +334,46 @@ async def set_settings(body: dict):
 @app.get("/api/learning")
 async def learning():
     return {"ok": True, "learning": engine.learning_status()}
+
+
+@app.post("/api/backtest/run")
+async def backtest_run(symbols: str = "BTC-USDT,ETH-USDT,SOL-USDT,BNB-USDT,XRP-USDT,DOGE-USDT,ADA-USDT,AVAX-USDT,SUI-USDT,DOGE-USDT"):
+    """Run the 20-agent strategy over ~40 days of 1h historical data
+    with real fees. Returns the honest backtest report."""
+    import backtest as bt
+    syms = [s.strip() for s in symbols.split(",") if s.strip()]
+    results = []
+    for sym in dict.fromkeys(syms):
+        try:
+            candles = await market.fetch_klines_history(sym, "1h", 900)
+            if len(candles) < 80:
+                continue
+            trades, pnl, dd = await asyncio.to_thread(
+                bt.backtest_symbol, sym, candles)
+            results.append((sym, trades, pnl, dd))
+        except Exception:
+            continue
+    report = bt.summarize(results)
+    engine._event("backtest",
+                  f"🧪 Backtest: {report['trades']} tregti, win rate "
+                  f"{report['win_rate']}%, PnL {report['total_pnl']:+.2f} USDT, "
+                  f"R:R {report['rr']}, drawdown {report['max_drawdown_pct']}%")
+    return {"ok": True, "report": report}
+
+
+@app.get("/api/dca")
+async def dca_status():
+    return {"ok": True, "dca": engine.dca_status()}
+
+
+@app.post("/api/dca/settings")
+async def dca_settings(body: dict):
+    info = engine.dca_set(
+        enabled=body.get("enabled"),
+        amount=body.get("amount"),
+        interval=body.get("interval_min"),
+        symbol=body.get("symbol"))
+    return {"ok": True, "dca": info}
 
 
 @app.get("/api/real/status")

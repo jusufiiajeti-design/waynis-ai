@@ -36,6 +36,20 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 📈 DCA (dollar-cost averaging) mode ----
+DCA_ENABLED = False              # off until user turns it on
+DCA_AMOUNT = 5.0                 # USDT per buy
+DCA_INTERVAL_MIN = 60            # buy every N minutes
+DCA_SYMBOL = "BTC-USDT"
+
+# ---- 🎯 Multi-timeframe confirmation ----
+MTF_ENABLED = True               # confirm 1m signal with 15m trend
+MTF_BAR = "15m"
+MTF_FAST = 20                    # EMA fast period on MTF
+MTF_SLOW = 50                    # EMA slow period on MTF
+MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
+
+
 
 
 # ============ providers.py ============
@@ -233,6 +247,50 @@ class MarketData:
             except Exception:
                 pass
         return []
+
+    async def fetch_klines_history(self, okx_symbol: str, interval: str = "1h",
+                                   limit: int = 900) -> list:
+        """Historical klines via OKX pagination (oldest -> newest).
+        Used by the backtest engine."""
+        bar = OKX_BAR.get(interval, "1H")
+        out = []
+        seen = set()
+        after = None
+        page = 100                         # OKX history-candles caps at 100
+        try:
+            while len(out) < limit:
+                url = (f"https://www.okx.com/api/v5/market/history-candles"
+                       f"?instId={okx_symbol}&bar={bar}&limit={page}")
+                if after:
+                    url += f"&after={after}"
+                data = await _http_json_async(url)
+                if not data.get("code") == "0":
+                    break
+                rows = data.get("data") or []
+                if not rows:
+                    break
+                batch = []
+                for r in rows:
+                    t = int(_safe_float(r[0]))
+                    c = _safe_float(r[4])
+                    if t in seen or c <= 0:
+                        continue
+                    seen.add(t)
+                    batch.append({
+                        "t": t, "o": _safe_float(r[1]),
+                        "h": _safe_float(r[2]), "l": _safe_float(r[3]),
+                        "c": c, "v": _safe_float(r[5]),
+                    })
+                if not batch:
+                    break
+                out.extend(batch)
+                after = batch[-1]["t"]      # oldest of this batch -> next page
+                if len(batch) < page:
+                    break
+        except Exception:
+            pass
+        out.sort(key=lambda x: x["t"])
+        return out[:limit]
 
     @staticmethod
     def _cb_symbol(okx_sym):
@@ -1161,6 +1219,176 @@ def save_history(history):
         pass
 
 
+# ============ backtest.py ============
+"""
+Waynis AI — BACKTEST engine.
+
+Runs the 20-agent strategy (10 strategy votes → consensus) on historical
+klines with REAL fees (0.1%/side) and reports the honest numbers:
+win rate, net PnL, average win/loss, reward:risk, max drawdown,
+fee impact. This tells us whether the strategy would actually make
+money BEFORE risking real capital.
+"""
+import time
+
+
+BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
+WARMUP = 40                     # candles used to warm indicators
+MAX_OPEN_PER_SYMBOL = 1
+
+
+def _votes_for(closes, highs, lows, vols, ticker=None):
+    """Run the 10 strategies on a snapshot; return consensus votes list."""
+    k = [{"o": o, "h": h, "l": l, "c": c, "v": v}
+         for o, h, l, c, v in zip(closes, highs, lows, closes, vols)]
+    votes = []
+    for s in STRATEGIES:
+        try:
+            v = s["fn"]("BT", k, ticker)
+        except Exception:
+            continue
+        if v:
+            votes.append((s["name"], v["direction"], v["confidence"]))
+    return votes
+
+
+def _consensus(votes, threshold=0.05):
+    """Simplified consensus: net weighted score, need >=2 supporters."""
+    net = tw = 0.0
+    for _, d, conf in votes:
+        net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
+        tw += 1
+    if tw < 2:
+        return None
+    score = net / tw
+    if score > threshold:
+        return "LONG", score
+    if score < -threshold:
+        return "SHORT", score
+    return None
+
+
+def backtest_symbol(symbol, candles):
+    """Simulate the strategy on one symbol's candles. Returns trade dicts."""
+    trades = []
+    pos = None
+    equity = BACKTEST_NOTIONAL
+    peak = equity
+    dd_max = 0.0
+
+    for i in range(WARMUP, len(candles)):
+        c = candles[i]
+        # ---- manage open position (intrabar TP/SL) ----
+        if pos:
+            if pos["side"] == "LONG":
+                if c["h"] >= pos["tp"]:
+                    exit_px = pos["tp"]
+                elif c["l"] <= pos["sl"]:
+                    exit_px = pos["sl"]
+                else:
+                    exit_px = None
+            else:
+                if c["l"] <= pos["tp"]:
+                    exit_px = pos["tp"]
+                elif c["h"] >= pos["sl"]:
+                    exit_px = pos["sl"]
+                else:
+                    exit_px = None
+            if exit_px is not None:
+                if pos["side"] == "LONG":
+                    gross = (exit_px - pos["entry"]) * pos["qty"]
+                else:
+                    gross = (pos["entry"] - exit_px) * pos["qty"]
+                fees = (pos["entry"] * pos["qty"] + exit_px * pos["qty"]) * FEE_RATE
+                pnl = gross - fees
+                equity += pnl
+                peak = max(peak, equity)
+                dd = (peak - equity) / peak * 100 if peak else 0
+                dd_max = max(dd_max, dd)
+                trades.append({
+                    "symbol": symbol, "side": pos["side"],
+                    "entry": pos["entry"], "exit": exit_px,
+                    "pnl": pnl, "fees": fees,
+                    "status": "win" if pnl > 0 else "loss",
+                })
+                pos = None
+                continue
+
+        # ---- look for a new entry ----
+        if pos or len(trades) > 400:
+            continue
+        closes = [x["c"] for x in candles[:i + 1]]
+        highs = [x["h"] for x in candles[:i + 1]]
+        lows = [x["l"] for x in candles[:i + 1]]
+        vols = [x["v"] for x in candles[:i + 1]]
+        votes = _votes_for(closes, highs, lows, vols)
+        cons = _consensus(votes)
+        if not cons:
+            continue
+        direction, score = cons
+        entry = c["c"]
+        if direction == "LONG":
+            tp = entry * (1 + TAKE_PROFIT)
+            sl = entry * (1 - STOP_LOSS)
+        else:
+            tp = entry * (1 - TAKE_PROFIT)
+            sl = entry * (1 + STOP_LOSS)
+        pos = {"side": direction, "entry": entry, "tp": tp, "sl": sl,
+               "qty": BACKTEST_NOTIONAL / entry}
+
+    # close any remaining position at last close
+    if pos:
+        exit_px = candles[-1]["c"]
+        if pos["side"] == "LONG":
+            gross = (exit_px - pos["entry"]) * pos["qty"]
+        else:
+            gross = (pos["entry"] - exit_px) * pos["qty"]
+        fees = (pos["entry"] * pos["qty"] + exit_px * pos["qty"]) * FEE_RATE
+        pnl = gross - fees
+        equity += pnl
+        trades.append({"symbol": symbol, "side": pos["side"],
+                       "entry": pos["entry"], "exit": exit_px,
+                       "pnl": pnl, "fees": fees,
+                       "status": "win" if pnl > 0 else "loss"})
+    return trades, equity - BACKTEST_NOTIONAL, dd_max
+
+
+def summarize(results):
+    """results: list of (symbol, trades, pnl, dd). Returns report dict."""
+    all_trades = []
+    for symbol, trades, pnl, dd in results:
+        for t in trades:
+            t["symbol"] = symbol
+        all_trades.extend(trades)
+    n = len(all_trades)
+    wins = [t for t in all_trades if t["status"] == "win"]
+    losses = [t for t in all_trades if t["status"] == "loss"]
+    total_pnl = sum(t["pnl"] for t in all_trades)
+    fees = sum(t["fees"] for t in all_trades)
+    gross_wins = sum(t["pnl"] for t in wins)
+    gross_losses = sum(abs(t["pnl"]) for t in losses)
+    avg_win = gross_wins / len(wins) if wins else 0.0
+    avg_loss = gross_losses / len(losses) if losses else 0.0
+    rr = avg_win / avg_loss if avg_loss else 0.0
+    max_dd = max((dd for _, _, _, dd in results), default=0.0)
+    n_symbols = len([r for r in results if r[1]])
+    return {
+        "symbols": n_symbols,
+        "trades": n,
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(100.0 * len(wins) / n, 1) if n else 0.0,
+        "total_pnl": round(total_pnl, 2),
+        "fees_paid": round(fees, 2),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(-avg_loss, 2),
+        "rr": round(rr, 2),
+        "max_drawdown_pct": round(max_dd, 2),
+        "net_per_trade": round(total_pnl / n, 3) if n else 0.0,
+        "done_at": time.time(),
+    }
+
+
 # ============ agents.py ============
 """
 Waynis AI — 20-AGENT collaborative control system.
@@ -1593,8 +1821,40 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
+        # 🎯 multi-timeframe confirmation (15m trend must agree)
+        if MTF_ENABLED:
+            ok, m = await self._mtf(e, best["symbol"], best["direction"])
+            if not ok:
+                self.report(f"{best['symbol']}: MTF {m}",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            self.report(f"{best['symbol']}: validuar ✓ {m}",
+                        best["symbol"], best["direction"], best["confidence"])
+            return
+
         self.report(f"{best['symbol']}: validuar ✓ — volumi dhe RSI në rregull",
                     best["symbol"], best["direction"], best["confidence"])
+
+    async def _mtf(self, e, symbol, direction):
+        """Confirm the 1m signal with the 15m trend (EMA fast vs slow)."""
+        cache = e.mtf_cache.get(symbol)
+        now = time.time()
+        if cache and now - cache[0] < MTF_CACHE_TTL:
+            closes = cache[1]
+        else:
+            klines = await e.market.fetch_klines(symbol, MTF_BAR, 60)
+            closes = [k["c"] for k in klines]
+            e.mtf_cache[symbol] = (now, closes)
+        if len(closes) < MTF_SLOW + 2:
+            return True, "MTF nuk disponohet — kalon"
+        fast = strat_ema(closes, MTF_FAST)[-1]
+        slow = strat_ema(closes, MTF_SLOW)[-1]
+        if direction == "LONG" and fast > slow:
+            return True, f"trendi {MTF_BAR} konfirmon (EMA{MTF_FAST}>{MTF_SLOW})"
+        if direction == "SHORT" and fast < slow:
+            return True, f"trendi {MTF_BAR} konfirmon (EMA{MTF_FAST}<{MTF_SLOW})"
+        return False, f"trendi {MTF_BAR} kundërshton drejtimin — hedhet"
 
 
 # ======================================================================
@@ -1957,6 +2217,13 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        # 📈 DCA state
+        self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
+        self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
+        self.dca_interval = settings.get("dca_interval_min", DCA_INTERVAL_MIN)
+        self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
+        # 🎯 multi-timeframe cache
+        self.mtf_cache = {}                          # symbol -> (ts, closes)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -2005,6 +2272,10 @@ class PaperEngine:
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS dca_buys(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL, symbol TEXT, price REAL,
+                amount_usd REAL, qty REAL)""")
             # migrate older DBs: add fees/bracket/votes/partial-tp if missing
             cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
             for col, ddl in [("fees", "REAL"), ("bracket", "TEXT"),
@@ -2171,6 +2442,93 @@ class PaperEngine:
             self._set_pipeline(0, "Lock", "🔒 Profit-lock aktiv — push përkohësisht")
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # 📈 DCA (dollar-cost averaging)
+    # ------------------------------------------------------------------
+    def dca_set(self, enabled=None, amount=None, interval=None, symbol=None):
+        if enabled is not None:
+            self.dca_enabled = bool(enabled)
+        if amount is not None:
+            self.dca_amount = max(1.0, float(amount))
+        if interval is not None:
+            self.dca_interval = max(5, int(interval))
+        if symbol:
+            self.dca_symbol = str(symbol).upper()
+        s = _load_settings()
+        s.update({"dca_enabled": self.dca_enabled, "dca_amount": self.dca_amount,
+                  "dca_interval_min": self.dca_interval,
+                  "dca_symbol": self.dca_symbol})
+        _save_settings(s)
+        self._event("settings",
+                    f"📈 DCA: {'ON' if self.dca_enabled else 'OFF'} — "
+                    f"${self.dca_amount} çdo {self.dca_interval} min te {self.dca_symbol}")
+        return self.dca_status()
+
+    def dca_status(self):
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id,ts,symbol,price,amount_usd,qty FROM dca_buys "
+                "ORDER BY id").fetchall()
+        buys = [{"id": r[0], "ts": r[1], "symbol": r[2], "price": r[3],
+                 "amount_usd": r[4], "qty": r[5]} for r in rows]
+        total_invested = sum(b["amount_usd"] for b in buys)
+        total_qty = sum(b["qty"] for b in buys)
+        price = self.last_tickers.get(self.dca_symbol, {}).get("price") or 0.0
+        if not price and buys:
+            price = buys[-1]["price"]
+        value = total_qty * price if price else 0.0
+        pnl = value - total_invested
+        pnl_pct = (pnl / total_invested * 100) if total_invested else 0.0
+        return {
+            "enabled": self.dca_enabled,
+            "amount": self.dca_amount,
+            "interval_min": self.dca_interval,
+            "symbol": self.dca_symbol,
+            "buys": len(buys),
+            "total_invested": round(total_invested, 2),
+            "total_qty": round(total_qty, 8),
+            "current_price": round(price, 8),
+            "value": round(value, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "last_buy_ts": buys[-1]["ts"] if buys else None,
+        }
+
+    async def dca_check(self):
+        """If DCA enabled and interval passed -> make the periodic buy."""
+        if not self.dca_enabled:
+            return
+        try:
+            with self._conn() as c:
+                row = c.execute(
+                    "SELECT MAX(ts) FROM dca_buys").fetchone()
+            last_ts = row[0] or 0.0
+            if time.time() - last_ts < self.dca_interval * 60:
+                return
+            price = self.last_tickers.get(self.dca_symbol, {}).get("price")
+            if not price:
+                tickers = await self.market.fetch_all_tickers()
+                self.last_tickers = tickers
+                price = self.last_tickers.get(self.dca_symbol, {}).get("price")
+            if not price or price <= 0:
+                return
+            qty = self.dca_amount / price
+            if self.mode == "real" and self.exchange.configured:
+                sym = to_exchange_symbol(self.dca_symbol, self.exchange)
+                await asyncio.to_thread(self.exchange.market_buy, sym, qty)
+            with self._conn() as c:
+                c.execute(
+                    "INSERT INTO dca_buys(ts,symbol,price,amount_usd,qty) "
+                    "VALUES(?,?,?,?,?)",
+                    (time.time(), self.dca_symbol, price,
+                     self.dca_amount, qty))
+            self._event("dca",
+                        f"📈 DCA: bleva ${self.dca_amount:.2f} {self.dca_symbol} "
+                        f"@ {price:.4g} ({qty:.8f})",
+                        self.dca_symbol)
+        except Exception as e:
+            self._event("error", f"DCA: {str(e)[:80]}")
 
     # ------------------------------------------------------------------
     # Mode (paper / real)
@@ -2378,6 +2736,11 @@ class PaperEngine:
         # 🔒 profit-lock check before anything else
         try:
             await self.check_profit_lock()
+        except Exception:
+            pass
+        # 📈 DCA periodic buy
+        try:
+            await self.dca_check()
         except Exception:
             pass
         ctx = CycleContext(self, self.market, idx)
@@ -2864,6 +3227,8 @@ async def status():
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
+        "dca": engine.dca_status(),
+        "mtf_enabled": True,
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -2960,6 +3325,46 @@ async def set_settings(body: dict):
 @app.get("/api/learning")
 async def learning():
     return {"ok": True, "learning": engine.learning_status()}
+
+
+@app.post("/api/backtest/run")
+async def backtest_run(symbols: str = "BTC-USDT,ETH-USDT,SOL-USDT,BNB-USDT,XRP-USDT,DOGE-USDT,ADA-USDT,AVAX-USDT,SUI-USDT,DOGE-USDT"):
+    """Run the 20-agent strategy over ~40 days of 1h historical data
+    with real fees. Returns the honest backtest report."""
+    import backtest as bt
+    syms = [s.strip() for s in symbols.split(",") if s.strip()]
+    results = []
+    for sym in dict.fromkeys(syms):
+        try:
+            candles = await market.fetch_klines_history(sym, "1h", 900)
+            if len(candles) < 80:
+                continue
+            trades, pnl, dd = await asyncio.to_thread(
+                bt.backtest_symbol, sym, candles)
+            results.append((sym, trades, pnl, dd))
+        except Exception:
+            continue
+    report = bt.summarize(results)
+    engine._event("backtest",
+                  f"🧪 Backtest: {report['trades']} tregti, win rate "
+                  f"{report['win_rate']}%, PnL {report['total_pnl']:+.2f} USDT, "
+                  f"R:R {report['rr']}, drawdown {report['max_drawdown_pct']}%")
+    return {"ok": True, "report": report}
+
+
+@app.get("/api/dca")
+async def dca_status():
+    return {"ok": True, "dca": engine.dca_status()}
+
+
+@app.post("/api/dca/settings")
+async def dca_settings(body: dict):
+    info = engine.dca_set(
+        enabled=body.get("enabled"),
+        amount=body.get("amount"),
+        interval=body.get("interval_min"),
+        symbol=body.get("symbol"))
+    return {"ok": True, "dca": info}
 
 
 @app.get("/api/real/status")

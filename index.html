@@ -364,6 +364,27 @@
     <div style="font-size:10.5px;color:var(--dim);margin:2px 0 8px;text-align:center">
       PnL-i është <b>pas tarifave</b> (0.1% / anë). TP +0.45% · SL −0.35% klasik.
     </div>
+    <div class="sec-t">🧪 Backtest (provë historike)</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
+        Provon strategjinë 20-agjente në <b>~37 ditë të dhënash 1-orëshe</b>
+        për 10 monedha, me <b>tarifa reale 0.1%/anë</b>. Ky është testi më i
+        ndershëm përpara parave reale.
+      </p>
+      <button class="btn btn-green" id="btnBacktest" style="width:100%" onclick="runBacktest()">🧪 Provo strategjinë (1 min)</button>
+      <div id="btResult" style="margin-top:12px;font-size:12px;line-height:1.7"></div>
+    </div>
+
+    <div class="sec-t">📈 DCA — blerje e rregullt</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
+        Strategjia më e provuar historikisht: <b>blej rregullisht pa u munduar
+        ta kapësh tregun</b>. Mesatarizon çmimin me kalimin e kohës.
+      </p>
+      <div id="dcaStatus" style="font-size:12px;color:var(--mut);line-height:1.7;margin-bottom:10px">—</div>
+      <button class="btn btn-ghost" id="btnDca" style="width:100%" onclick="toggleDca()">📈 Aktivizo DCA</button>
+    </div>
+
     <div class="sec-t">🧾 Historiku i tregtive</div>
     <div id="tradeList"></div>
     <button class="btn btn-ghost" id="btnReset" style="width:100%;margin-top:10px">↺ Rivendos llogarinë demo</button>
@@ -422,6 +443,29 @@
         <div class="kbd" id="modeKbd">KOMPONIM</div>
       </div>
     </div>
+    <div class="sec-t">📈 DCA (blerje e rregullt)</div>
+    <div class="card" style="padding:4px 12px">
+      <div class="set">
+        <div><div class="l">DCA</div><div class="d">Blerje automatike e rregullt — mesatarizon çmimin</div></div>
+        <div class="switch" id="swDca" onclick="toggleDca()"></div>
+      </div>
+      <div class="set">
+        <div><div class="l">Shuma për blerje</div><div class="d">USDT çdo herë</div></div>
+        <input type="number" id="dcaAmt" min="1" step="1" value="5" class="inp" style="width:70px" onchange="saveDcaSettings()">
+      </div>
+      <div class="set">
+        <div><div class="l">Çdo sa minuta</div><div class="d">Sa shpesh blen</div></div>
+        <input type="number" id="dcaInt" min="5" step="5" value="60" class="inp" style="width:70px" onchange="saveDcaSettings()">
+      </div>
+      <div class="set">
+        <div><div class="l">Monedha</div><div class="d">BTC-USDT · ETH-USDT · SOL-USDT…</div></div>
+        <input type="text" id="dcaSym" value="BTC-USDT" class="inp" onchange="saveDcaSettings()">
+      </div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.5;margin:6px 0 4px">
+        Në paper: blerjet regjistrohen dhe shfaqen te tab-i Tregti. Në Real Mode: blen vërtet në exchange.
+      </div>
+    </div>
+
     <div class="sec-t">🧠 AI Logjika</div>
     <div class="card" style="padding:4px 12px">
       <div class="set">
@@ -881,6 +925,65 @@ function drawEquity(){
   $("eqGrowth").textContent = `Equity ${fmt(last.e)} · ${fmt(growth,3)}x`;
 }
 
+/* ================= backtest + DCA ================= */
+async function runBacktest(){
+  const b=$("btnBacktest"); b.disabled=true; b.textContent="⏳ Duke testuar… (1 min)";
+  $("btResult").innerHTML='<span class="ai-thinking">🧪 Duke tërhequr ~37 ditë të dhënash për 10 monedha…</span>';
+  try{
+    const d = await jf("/api/backtest/run",{method:"POST"});
+    const r=d.report;
+    const ok = r.total_pnl>=0;
+    $("btResult").innerHTML =
+      `<b>Rezultati (10 monedha · 37 ditë · tarifa 0.1%)</b><br>
+       Tregti: <b>${r.trades}</b> · Fitore: ${r.wins} · Humbje: ${r.losses}<br>
+       Win rate: <b style="color:${r.win_rate>=50?'var(--green)':'var(--red)'}">${r.win_rate}%</b> ·
+       Fitim:Humbje: <b>1:${r.rr}</b><br>
+       PnL neto (pas tarifave): <b style="color:${ok?'var(--green)':'var(--red)'}">${r.total_pnl>0?'+':''}${r.total_pnl} USDT</b><br>
+       Tarifat e paguara: <b style="color:var(--amber)">$${r.fees_paid}</b> ·
+       Drawdown max: ${r.max_drawdown_pct}%<br>
+       <span style="color:var(--dim);font-size:11px">${ok?"✅ Strategjia mbijeton tarifat — pozitive.":"⚠️ Strategjia humbet me tarifat aktuale (TP 0.45% / SL 0.35%)."} ${r.net_per_trade>0?"":"Pritshmëria/tregti: "+r.net_per_trade+" USDT."}</span>`;
+  }catch(e){
+    $("btResult").innerHTML='<span style="color:var(--red)">Gabim gjatë testit — provo sërish</span>';
+  }
+  b.disabled=false; b.textContent="🧪 Provo strategjinë (1 min)";
+}
+
+async function refreshDca(){
+  try{ const d=await jf("/api/dca"); renderDca(d.dca); }catch(e){}
+}
+function renderDca(dc){
+  if(!dc) return;
+  $("swDca").classList.toggle("on", !!dc.enabled);
+  $("dcaAmt").value = dc.amount||5;
+  $("dcaInt").value = dc.interval_min||60;
+  $("dcaSym").value = dc.symbol||"BTC-USDT";
+  const st=$("dcaStatus");
+  st.innerHTML = dc.enabled
+    ? `<b>AKTIV</b> · ${dc.buys} blerje · Investuar <b>$${dc.total_invested}</b> · Vlera <b>$${dc.value}</b><br>
+       PnL: <b style="color:${dc.pnl>=0?'var(--green)':'var(--red)'}">${dc.pnl>=0?'+':''}${dc.pnl} USDT (${dc.pnl_pct>=0?'+':''}${dc.pnl_pct}%)</b> · Çmimi aktual ${dc.current_price}`
+    : `<b>JO aktiv</b> — Shtyp butonin për të blerë $${dc.amount||5} ${dc.symbol||"BTC-USDT"} çdo ${dc.interval_min||60} min (mesatarizon çmimin me kohën)`;
+}
+async function toggleDca(){
+  const sw=$("swDca"); const on=!sw.classList.contains("on");
+  sw.classList.toggle("on", on);
+  try{
+    const d=await jf("/api/dca/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:on})});
+    renderDca(d.dca);
+    toast(on?"📈 DCA AKTIV — blerje e rregullt":"DCA OFF");
+  }catch(e){ sw.classList.toggle("on", !on); }
+}
+async function saveDcaSettings(){
+  try{
+    const d=await jf("/api/dca/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      amount: parseFloat($("dcaAmt").value)||5,
+      interval_min: parseInt($("dcaInt").value)||60,
+      symbol: $("dcaSym").value.trim()||"BTC-USDT"
+    })});
+    renderDca(d.dca);
+    toast("✅ Cilësimet DCA u ruajtën");
+  }catch(e){}
+}
+
 /* ================= learning panel ================= */
 let learnData=null;
 async function refreshLearning(){
@@ -1039,7 +1142,7 @@ document.querySelectorAll(".ni").forEach(ni=>{
     $("tab-"+tab).classList.add("on");
     S.tab=tab;
     if(tab==="feed"){ refreshTickers(); refreshEvents(); }
-    if(tab==="trades"){ refreshTrades(); refreshEquity(); refreshLearning(); setTimeout(drawEquity,60); setTimeout(drawLearnChart,60); }
+    if(tab==="trades"){ refreshTrades(); refreshEquity(); refreshLearning(); refreshDca(); setTimeout(drawEquity,60); setTimeout(drawLearnChart,60); }
     if(tab==="home"){ setTimeout(drawChart,60); }
     if(tab==="settings"){ loadAISettings(); }
   });
@@ -1174,7 +1277,7 @@ async function saveAI(){
   b.disabled=false; b.textContent="💾 Ruaj cilësimet e AI";
 }
 
-function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); refreshLearning(); }
+function refreshAll(){ refreshStatus(); refreshTickers(); refreshKlines(); refreshTrades(); refreshEvents(); refreshEquity(); refreshLearning(); refreshDca(); }
 
 /* ================= boot ================= */
 buildChips();

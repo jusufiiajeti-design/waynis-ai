@@ -27,7 +27,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
-                    EQUITY_LOCK_PAUSE_MIN)
+                    EQUITY_LOCK_PAUSE_MIN,
+                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -87,6 +88,13 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        # 📈 DCA state
+        self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
+        self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
+        self.dca_interval = settings.get("dca_interval_min", DCA_INTERVAL_MIN)
+        self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
+        # 🎯 multi-timeframe cache
+        self.mtf_cache = {}                          # symbol -> (ts, closes)
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -135,6 +143,10 @@ class PaperEngine:
             c.execute("""CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT, type TEXT, msg TEXT, symbol TEXT)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS dca_buys(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL, symbol TEXT, price REAL,
+                amount_usd REAL, qty REAL)""")
             # migrate older DBs: add fees/bracket/votes/partial-tp if missing
             cols = [r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()]
             for col, ddl in [("fees", "REAL"), ("bracket", "TEXT"),
@@ -301,6 +313,93 @@ class PaperEngine:
             self._set_pipeline(0, "Lock", "🔒 Profit-lock aktiv — push përkohësisht")
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # 📈 DCA (dollar-cost averaging)
+    # ------------------------------------------------------------------
+    def dca_set(self, enabled=None, amount=None, interval=None, symbol=None):
+        if enabled is not None:
+            self.dca_enabled = bool(enabled)
+        if amount is not None:
+            self.dca_amount = max(1.0, float(amount))
+        if interval is not None:
+            self.dca_interval = max(5, int(interval))
+        if symbol:
+            self.dca_symbol = str(symbol).upper()
+        s = _load_settings()
+        s.update({"dca_enabled": self.dca_enabled, "dca_amount": self.dca_amount,
+                  "dca_interval_min": self.dca_interval,
+                  "dca_symbol": self.dca_symbol})
+        _save_settings(s)
+        self._event("settings",
+                    f"📈 DCA: {'ON' if self.dca_enabled else 'OFF'} — "
+                    f"${self.dca_amount} çdo {self.dca_interval} min te {self.dca_symbol}")
+        return self.dca_status()
+
+    def dca_status(self):
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id,ts,symbol,price,amount_usd,qty FROM dca_buys "
+                "ORDER BY id").fetchall()
+        buys = [{"id": r[0], "ts": r[1], "symbol": r[2], "price": r[3],
+                 "amount_usd": r[4], "qty": r[5]} for r in rows]
+        total_invested = sum(b["amount_usd"] for b in buys)
+        total_qty = sum(b["qty"] for b in buys)
+        price = self.last_tickers.get(self.dca_symbol, {}).get("price") or 0.0
+        if not price and buys:
+            price = buys[-1]["price"]
+        value = total_qty * price if price else 0.0
+        pnl = value - total_invested
+        pnl_pct = (pnl / total_invested * 100) if total_invested else 0.0
+        return {
+            "enabled": self.dca_enabled,
+            "amount": self.dca_amount,
+            "interval_min": self.dca_interval,
+            "symbol": self.dca_symbol,
+            "buys": len(buys),
+            "total_invested": round(total_invested, 2),
+            "total_qty": round(total_qty, 8),
+            "current_price": round(price, 8),
+            "value": round(value, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "last_buy_ts": buys[-1]["ts"] if buys else None,
+        }
+
+    async def dca_check(self):
+        """If DCA enabled and interval passed -> make the periodic buy."""
+        if not self.dca_enabled:
+            return
+        try:
+            with self._conn() as c:
+                row = c.execute(
+                    "SELECT MAX(ts) FROM dca_buys").fetchone()
+            last_ts = row[0] or 0.0
+            if time.time() - last_ts < self.dca_interval * 60:
+                return
+            price = self.last_tickers.get(self.dca_symbol, {}).get("price")
+            if not price:
+                tickers = await self.market.fetch_all_tickers()
+                self.last_tickers = tickers
+                price = self.last_tickers.get(self.dca_symbol, {}).get("price")
+            if not price or price <= 0:
+                return
+            qty = self.dca_amount / price
+            if self.mode == "real" and self.exchange.configured:
+                sym = to_exchange_symbol(self.dca_symbol, self.exchange)
+                await asyncio.to_thread(self.exchange.market_buy, sym, qty)
+            with self._conn() as c:
+                c.execute(
+                    "INSERT INTO dca_buys(ts,symbol,price,amount_usd,qty) "
+                    "VALUES(?,?,?,?,?)",
+                    (time.time(), self.dca_symbol, price,
+                     self.dca_amount, qty))
+            self._event("dca",
+                        f"📈 DCA: bleva ${self.dca_amount:.2f} {self.dca_symbol} "
+                        f"@ {price:.4g} ({qty:.8f})",
+                        self.dca_symbol)
+        except Exception as e:
+            self._event("error", f"DCA: {str(e)[:80]}")
 
     # ------------------------------------------------------------------
     # Mode (paper / real)
@@ -508,6 +607,11 @@ class PaperEngine:
         # 🔒 profit-lock check before anything else
         try:
             await self.check_profit_lock()
+        except Exception:
+            pass
+        # 📈 DCA periodic buy
+        try:
+            await self.dca_check()
         except Exception:
             pass
         ctx = CycleContext(self, self.market, idx)

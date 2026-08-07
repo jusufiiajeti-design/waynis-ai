@@ -41,7 +41,8 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
-                    TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST)
+                    TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST,
+                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL)
 from providers import WATCHLIST
 from strategies import STRATEGIES, vol_ratio, rsi, ema as strat_ema
 from learning import (aggregate_from_trades, meta_threshold,
@@ -441,8 +442,40 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
+        # 🎯 multi-timeframe confirmation (15m trend must agree)
+        if MTF_ENABLED:
+            ok, m = await self._mtf(e, best["symbol"], best["direction"])
+            if not ok:
+                self.report(f"{best['symbol']}: MTF {m}",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            self.report(f"{best['symbol']}: validuar ✓ {m}",
+                        best["symbol"], best["direction"], best["confidence"])
+            return
+
         self.report(f"{best['symbol']}: validuar ✓ — volumi dhe RSI në rregull",
                     best["symbol"], best["direction"], best["confidence"])
+
+    async def _mtf(self, e, symbol, direction):
+        """Confirm the 1m signal with the 15m trend (EMA fast vs slow)."""
+        cache = e.mtf_cache.get(symbol)
+        now = time.time()
+        if cache and now - cache[0] < MTF_CACHE_TTL:
+            closes = cache[1]
+        else:
+            klines = await e.market.fetch_klines(symbol, MTF_BAR, 60)
+            closes = [k["c"] for k in klines]
+            e.mtf_cache[symbol] = (now, closes)
+        if len(closes) < MTF_SLOW + 2:
+            return True, "MTF nuk disponohet — kalon"
+        fast = strat_ema(closes, MTF_FAST)[-1]
+        slow = strat_ema(closes, MTF_SLOW)[-1]
+        if direction == "LONG" and fast > slow:
+            return True, f"trendi {MTF_BAR} konfirmon (EMA{MTF_FAST}>{MTF_SLOW})"
+        if direction == "SHORT" and fast < slow:
+            return True, f"trendi {MTF_BAR} konfirmon (EMA{MTF_FAST}<{MTF_SLOW})"
+        return False, f"trendi {MTF_BAR} kundërshton drejtimin — hedhet"
 
 
 # ======================================================================
