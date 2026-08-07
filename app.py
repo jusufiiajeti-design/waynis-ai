@@ -1513,24 +1513,58 @@ def _warmup():
     except Exception:
         pass
 
+def _serve_file(relpath: str, media_type: str):
+    """Read a file from disk and return it as bytes (robust for all hosts,
+    unlike FileResponse which can fail on some PaaS setups)."""
+    from fastapi.responses import Response
+    path = os.path.join(STATIC, relpath)
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return JSONResponse(
+            {"error": f"Skedari '{relpath}' nuk u gjet (u provua: {path})"},
+            status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return Response(content=data, media_type=media_type,
+                    headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(os.path.join(STATIC, "index.html"))
+    return _serve_file("index.html", "text/html; charset=utf-8")
+
+
+@app.get("/debug", include_in_schema=False)
+async def debug():
+    """Troubleshooting: where files live and what exists."""
+    import glob
+    cwd = os.getcwd()
+    base = BASE
+    here = [f for f in os.listdir(base) if os.path.isfile(os.path.join(base, f))]
+    return {
+        "cwd": cwd,
+        "base": base,
+        "files_in_base": here,
+        "index_exists": os.path.exists(os.path.join(base, "index.html")),
+    }
 
 
 # Web app assets (flat layout — no /static subfolder needed)
-for _name, _path in [("manifest.webmanifest", "manifest.webmanifest"),
-                     ("sw.js", "sw.js"),
-                     ("icon-192.png", "icon-192.png"),
-                     ("icon-512.png", "icon-512.png")]:
+for _name, _path, _mime in [("manifest.webmanifest", "manifest.webmanifest",
+                             "application/manifest+json"),
+                            ("sw.js", "sw.js", "application/javascript"),
+                            ("icon-192.png", "icon-192.png", "image/png"),
+                            ("icon-512.png", "icon-512.png", "image/png")]:
     @app.get("/" + _name, include_in_schema=False)
-    async def _asset(path=_path):
-        return FileResponse(os.path.join(STATIC, path))
+    async def _asset(path=_path, mime=_mime):
+        return _serve_file(path, mime)
 
     # backwards-compatible aliases under /static/
     @app.get("/static/" + _name, include_in_schema=False)
-    async def _asset_old(path=_path):
-        return FileResponse(os.path.join(STATIC, path))
+    async def _asset_old(path=_path, mime=_mime):
+        return _serve_file(path, mime)
 
 
 # ---------------------------------------------------------------
