@@ -56,7 +56,8 @@ PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
-AGENT_TARGET = 100               # how many variants to generate (100)
+AGENT_TARGET = 1000              # 1000 agjentë (variante strategjike) që bashkëpunojnë
+                                 # me vota — çdo familje (EMA, RSI, MACD…) ka një zë të barabartë
 
 
 

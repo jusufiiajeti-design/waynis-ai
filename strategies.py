@@ -671,7 +671,7 @@ def _v_keltner(period, mult):
     return fn
 
 
-def generate_variant_strategies(target=500):
+def generate_variant_strategies(target=1000):
     """Build up to `target` real strategy variants by sweeping parameter grids."""
     combos = []
     for f, s in [(3, 7), (4, 9), (5, 10), (5, 13), (6, 12), (7, 15), (8, 17), (9, 21),
@@ -782,6 +782,67 @@ def generate_variant_strategies(target=500):
         combos.append(("BTREND(" + str(p) + ")", _v_breakeven_trend(p)))
     for _ in range(8):
         combos.append(("PSAR", _v_psar(0.02)))
+    # --- 🔧 TOP-UP deri në `target` (1000 agjentë): variante shtesë të
+    # gjeneruara në mënyrë DETERMINISTIKE (po këto çdo herë, që peshat
+    # e mësuara nga Learning të mos prishen). Çdo familje zëvendësohet
+    # në mënyrë të barabartë që asnjë familje të mos dominojë votimin. ---
+    if len(combos) < target:
+        # hiq dublikatat nga baza (p.sh. ATR(14,1.0) në 2 sythe), që
+        # target-i të arrihet saktësisht
+        _seen0 = set()
+        _dedup = []
+        for _n0, _f0 in combos:
+            if _n0 in _seen0:
+                continue
+            _seen0.add(_n0)
+            _dedup.append((_n0, _f0))
+        combos = _dedup
+        import random as _r
+        _r.seed(20260808)          # determinist — po të njëjtët 1000 agjentë çdo herë
+        def _mk_ema():
+            f = _r.randint(2, 30); s = _r.randint(f + 3, 90)
+            return f"EMA({f},{s})", _v_ema(f, s)
+        def _mk_rsi():
+            p = _r.randint(3, 45); lo = _r.randint(18, 38); hi = _r.randint(62, 84)
+            return f"RSI({p},{lo}/{hi})", _v_rsi(p, lo, hi)
+        def _mk_macd():
+            f = _r.randint(2, 16); s = _r.randint(f + 3, 40); g = _r.randint(3, 12)
+            return f"MACD({f},{s},{g})", _v_macd(f, s, g)
+        def _mk_boll():
+            p = _r.randint(5, 60); kk = round(_r.uniform(1.2, 3.0), 1)
+            return f"BOLL({p},{kk})", _v_boll(p, kk)
+        def _mk_mom():
+            p = _r.randint(2, 60); t = round(_r.uniform(0.15, 0.85), 2)
+            return f"MOM({p},{t})", _v_mom(p, t)
+        def _mk_stoch():
+            kp = _r.randint(4, 40); dp = _r.randint(3, 9)
+            return f"STOCH({kp})", _v_stoch(kp, dp)
+        def _mk_atr():
+            p = _r.randint(7, 40); m = round(_r.uniform(1.0, 3.0), 1)
+            return f"ATR({p},{m})", _v_atr(p, m)
+        def _mk_emarsi():
+            f = _r.randint(3, 25); s = _r.randint(f + 2, 60)
+            lo = _r.randint(20, 40); hi = _r.randint(60, 85)
+            return f"EMARSI({f},{s},{lo}/{hi})", _v_ema_rsi(f, s, lo, hi)
+        def _mk_dual():
+            f = _r.randint(2, 20); s = _r.randint(f * 2, f * 4 + 20)
+            return f"DUALMOM({f},{s})", _v_dual_mom(f, s)
+        def _mk_btrend():
+            p = _r.randint(5, 200)
+            return f"BTREND({p})", _v_breakeven_trend(p)
+        makers = [_mk_ema, _mk_rsi, _mk_macd, _mk_boll, _mk_mom, _mk_stoch,
+                  _mk_atr, _mk_emarsi, _mk_dual, _mk_btrend]
+        used = {n for n, _ in combos}
+        mi = 0
+        guard = 0
+        while len(combos) < target and guard < target * 20:
+            guard += 1
+            mi = (mi + 1) % len(makers)
+            name, fn = makers[mi]()
+            if name in used:
+                continue
+            used.add(name)
+            combos.append((name, fn))
     # dedupe names
     seen = set()
     out = []

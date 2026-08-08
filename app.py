@@ -57,7 +57,8 @@ PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
-AGENT_TARGET = 100               # how many variants to generate (100)
+AGENT_TARGET = 1000              # 1000 agjentë (variante strategjike) që bashkëpunojnë
+                                 # me vota — çdo familje (EMA, RSI, MACD…) ka një zë të barabartë
 
 
 
@@ -1472,7 +1473,7 @@ def _v_keltner(period, mult):
     return fn
 
 
-def generate_variant_strategies(target=500):
+def generate_variant_strategies(target=1000):
     """Build up to `target` real strategy variants by sweeping parameter grids."""
     combos = []
     for f, s in [(3, 7), (4, 9), (5, 10), (5, 13), (6, 12), (7, 15), (8, 17), (9, 21),
@@ -1583,6 +1584,67 @@ def generate_variant_strategies(target=500):
         combos.append(("BTREND(" + str(p) + ")", _v_breakeven_trend(p)))
     for _ in range(8):
         combos.append(("PSAR", _v_psar(0.02)))
+    # --- 🔧 TOP-UP deri në `target` (1000 agjentë): variante shtesë të
+    # gjeneruara në mënyrë DETERMINISTIKE (po këto çdo herë, që peshat
+    # e mësuara nga Learning të mos prishen). Çdo familje zëvendësohet
+    # në mënyrë të barabartë që asnjë familje të mos dominojë votimin. ---
+    if len(combos) < target:
+        # hiq dublikatat nga baza (p.sh. ATR(14,1.0) në 2 sythe), që
+        # target-i të arrihet saktësisht
+        _seen0 = set()
+        _dedup = []
+        for _n0, _f0 in combos:
+            if _n0 in _seen0:
+                continue
+            _seen0.add(_n0)
+            _dedup.append((_n0, _f0))
+        combos = _dedup
+        import random as _r
+        _r.seed(20260808)          # determinist — po të njëjtët 1000 agjentë çdo herë
+        def _mk_ema():
+            f = _r.randint(2, 30); s = _r.randint(f + 3, 90)
+            return f"EMA({f},{s})", _v_ema(f, s)
+        def _mk_rsi():
+            p = _r.randint(3, 45); lo = _r.randint(18, 38); hi = _r.randint(62, 84)
+            return f"RSI({p},{lo}/{hi})", _v_rsi(p, lo, hi)
+        def _mk_macd():
+            f = _r.randint(2, 16); s = _r.randint(f + 3, 40); g = _r.randint(3, 12)
+            return f"MACD({f},{s},{g})", _v_macd(f, s, g)
+        def _mk_boll():
+            p = _r.randint(5, 60); kk = round(_r.uniform(1.2, 3.0), 1)
+            return f"BOLL({p},{kk})", _v_boll(p, kk)
+        def _mk_mom():
+            p = _r.randint(2, 60); t = round(_r.uniform(0.15, 0.85), 2)
+            return f"MOM({p},{t})", _v_mom(p, t)
+        def _mk_stoch():
+            kp = _r.randint(4, 40); dp = _r.randint(3, 9)
+            return f"STOCH({kp})", _v_stoch(kp, dp)
+        def _mk_atr():
+            p = _r.randint(7, 40); m = round(_r.uniform(1.0, 3.0), 1)
+            return f"ATR({p},{m})", _v_atr(p, m)
+        def _mk_emarsi():
+            f = _r.randint(3, 25); s = _r.randint(f + 2, 60)
+            lo = _r.randint(20, 40); hi = _r.randint(60, 85)
+            return f"EMARSI({f},{s},{lo}/{hi})", _v_ema_rsi(f, s, lo, hi)
+        def _mk_dual():
+            f = _r.randint(2, 20); s = _r.randint(f * 2, f * 4 + 20)
+            return f"DUALMOM({f},{s})", _v_dual_mom(f, s)
+        def _mk_btrend():
+            p = _r.randint(5, 200)
+            return f"BTREND({p})", _v_breakeven_trend(p)
+        makers = [_mk_ema, _mk_rsi, _mk_macd, _mk_boll, _mk_mom, _mk_stoch,
+                  _mk_atr, _mk_emarsi, _mk_dual, _mk_btrend]
+        used = {n for n, _ in combos}
+        mi = 0
+        guard = 0
+        while len(combos) < target and guard < target * 20:
+            guard += 1
+            mi = (mi + 1) % len(makers)
+            name, fn = makers[mi]()
+            if name in used:
+                continue
+            used.add(name)
+            combos.append((name, fn))
     # dedupe names
     seen = set()
     out = []
@@ -2129,9 +2191,9 @@ def summarize(results):
     }
 # ============ agents.py ============
 """
-Waynis AI — 20-AGENT collaborative control system.
+Waynis AI — 28 AGENTË bërthamë + 1000 VARIANTE strategjike (ensemble) që bashkëpunojnë.
 
-The bot is run by TWENTY specialised agents that work together and LEARN:
+Boti drejtohet nga 28 agjentë të specializuar + 1000 variante strategjike që votojnë së bashku (çdo familje ka një zë të barabartë) dhe MËSOJNË:
 
   Phase 1  SCAN    1.  📡 Scanner          — fetches live prices + candles
   Phase 2  PREDICT 2.  📈 EMA Trend        — trend follower
@@ -2319,7 +2381,7 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 # ======================================================================
 class EnsembleVoterAgent(Agent):
     step, name, icon = 1, "Ensemble", "🧩"
-    role = "500 variante strategjike votojnë për kandidatin kryesor"
+    role = "1000 variante strategjike votojnë për kandidatin kryesor"
 
     async def execute(self, ctx, idx):
         e = self.engine
@@ -2452,7 +2514,7 @@ class GridBalancerAgent(Agent):
 # ======================================================================
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
-    role = "Kombinon votat e 10 strategjive me peshat e mësuara"
+    role = "Bashkëpunimi: kombinon votat e 1000 varianteve + strategjive me peshat e mësuara — çdo familje një zë"
 
     async def execute(self, ctx, idx):
         e = self.engine
@@ -2471,15 +2533,29 @@ class ConsensusAgent(Agent):
                 continue
             if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
                 continue                        # cooldown 45s pas mbylljes
+            # 🧩 BASHKËPUNIM 1000 AGJENTËSH: votat grupohen në FAMILJE
+            # (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, ...).
+            # Çdo familje ka NJË zë të barabartë → asnjë familje me shumë
+            # variante (p.sh. 300 EMA) nuk e dominon vendimin; familjet
+            # bashkëpunojnë dhe bien dakord bashkë.
+            fam = {}
+            for sname, d, conf in votes:
+                key = sname.split("(")[0] if "(" in sname else sname
+                f = fam.setdefault(key, [0.0, 0.0])
+                w = weights.get(sname, {}).get("weight", 1.0)
+                f[0] += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
+                f[1] += w
             net = 0.0
             tw = 0.0
-            for sname, d, conf in votes:
-                w = weights.get(sname, {}).get("weight", 1.0)
-                net += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
-                tw += w
+            for key, (fnet, fw) in fam.items():
+                if fw <= 0:
+                    continue
+                fw2 = weights.get(key, {}).get("family_weight", 1.0)
+                net += (fnet / fw) * fw2
+                tw += fw2
             if tw <= 0:
                 continue
-            score = net / tw                     # -1 .. 1
+            score = net / tw                     # -1 .. 1 (peshuar sipas familjeve)
             if score > threshold:
                 direction = "LONG"
             elif score < -threshold:
@@ -2496,10 +2572,17 @@ class ConsensusAgent(Agent):
                     score = min(score + 0.05, 1.0)
                 elif direction == "LONG" and n_short - n_long >= 4:
                     score = max(score - 0.05, -1.0)
-            supporting = [sname for sname, d, _ in votes
-                          if d == direction]
-            # grid-style consensus: 1 strong strategy (≥65%) OR 2+ weaker
-            strong = [v for v in votes if v[1] == direction and v[2] >= 65]
+            # familjet që mbështesin drejtimin e zgjedhur
+            fam_sup = {}
+            for sname, d, c in votes:
+                key = sname.split("(")[0] if "(" in sname else sname
+                if d == direction:
+                    e2 = fam_sup.setdefault(key, [0, 0.0])
+                    e2[0] += 1
+                    e2[1] = max(e2[1], c)
+            supporting = [k for k in fam_sup]
+            # konsensus gride: 1 familje e fortë (≥65%) OSE 2+ familje
+            strong = [k for k, (cnt, mx) in fam_sup.items() if mx >= 65]
             if len(supporting) < 2 and len(strong) < 1:
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)

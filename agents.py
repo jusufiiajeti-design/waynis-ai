@@ -1,7 +1,7 @@
 """
-Waynis AI — 20-AGENT collaborative control system.
+Waynis AI — 28 AGENTË bërthamë + 1000 VARIANTE strategjike (ensemble) që bashkëpunojnë.
 
-The bot is run by TWENTY specialised agents that work together and LEARN:
+Boti drejtohet nga 28 agjentë të specializuar + 1000 variante strategjike që votojnë së bashku (çdo familje ka një zë të barabartë) dhe MËSOJNË:
 
   Phase 1  SCAN    1.  📡 Scanner          — fetches live prices + candles
   Phase 2  PREDICT 2.  📈 EMA Trend        — trend follower
@@ -189,7 +189,7 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 # ======================================================================
 class EnsembleVoterAgent(Agent):
     step, name, icon = 1, "Ensemble", "🧩"
-    role = "500 variante strategjike votojnë për kandidatin kryesor"
+    role = "1000 variante strategjike votojnë për kandidatin kryesor"
 
     async def execute(self, ctx, idx):
         e = self.engine
@@ -322,7 +322,7 @@ class GridBalancerAgent(Agent):
 # ======================================================================
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
-    role = "Kombinon votat e 10 strategjive me peshat e mësuara"
+    role = "Bashkëpunimi: kombinon votat e 1000 varianteve + strategjive me peshat e mësuara — çdo familje një zë"
 
     async def execute(self, ctx, idx):
         e = self.engine
@@ -341,15 +341,29 @@ class ConsensusAgent(Agent):
                 continue
             if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
                 continue                        # cooldown 45s pas mbylljes
+            # 🧩 BASHKËPUNIM 1000 AGJENTËSH: votat grupohen në FAMILJE
+            # (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, ...).
+            # Çdo familje ka NJË zë të barabartë → asnjë familje me shumë
+            # variante (p.sh. 300 EMA) nuk e dominon vendimin; familjet
+            # bashkëpunojnë dhe bien dakord bashkë.
+            fam = {}
+            for sname, d, conf in votes:
+                key = sname.split("(")[0] if "(" in sname else sname
+                f = fam.setdefault(key, [0.0, 0.0])
+                w = weights.get(sname, {}).get("weight", 1.0)
+                f[0] += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
+                f[1] += w
             net = 0.0
             tw = 0.0
-            for sname, d, conf in votes:
-                w = weights.get(sname, {}).get("weight", 1.0)
-                net += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
-                tw += w
+            for key, (fnet, fw) in fam.items():
+                if fw <= 0:
+                    continue
+                fw2 = weights.get(key, {}).get("family_weight", 1.0)
+                net += (fnet / fw) * fw2
+                tw += fw2
             if tw <= 0:
                 continue
-            score = net / tw                     # -1 .. 1
+            score = net / tw                     # -1 .. 1 (peshuar sipas familjeve)
             if score > threshold:
                 direction = "LONG"
             elif score < -threshold:
@@ -366,10 +380,17 @@ class ConsensusAgent(Agent):
                     score = min(score + 0.05, 1.0)
                 elif direction == "LONG" and n_short - n_long >= 4:
                     score = max(score - 0.05, -1.0)
-            supporting = [sname for sname, d, _ in votes
-                          if d == direction]
-            # grid-style consensus: 1 strong strategy (≥65%) OR 2+ weaker
-            strong = [v for v in votes if v[1] == direction and v[2] >= 65]
+            # familjet që mbështesin drejtimin e zgjedhur
+            fam_sup = {}
+            for sname, d, c in votes:
+                key = sname.split("(")[0] if "(" in sname else sname
+                if d == direction:
+                    e2 = fam_sup.setdefault(key, [0, 0.0])
+                    e2[0] += 1
+                    e2[1] = max(e2[1], c)
+            supporting = [k for k in fam_sup]
+            # konsensus gride: 1 familje e fortë (≥65%) OSE 2+ familje
+            strong = [k for k, (cnt, mx) in fam_sup.items() if mx >= 65]
             if len(supporting) < 2 and len(strong) < 1:
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
