@@ -672,8 +672,10 @@ def _v_keltner(period, mult):
 
 
 def generate_variant_strategies(target=1000):
-    """Build up to `target` real strategy variants by sweeping parameter grids."""
+    """Build up to `target` real strategy variants by sweeping parameter grids.
+    100,000 variante unike, DETERMINISTIKE (po këto çdo herë)."""
     combos = []
+    _rr = __import__("random").Random(20260808)   # i izoluar: nuk prish random-in global
     for f, s in [(3, 7), (4, 9), (5, 10), (5, 13), (6, 12), (7, 15), (8, 17), (9, 21),
                  (10, 22), (11, 24), (12, 26), (13, 27), (14, 28), (15, 30), (16, 34),
                  (17, 35), (18, 40), (19, 41), (20, 50), (21, 43), (22, 45), (25, 55),
@@ -797,38 +799,36 @@ def generate_variant_strategies(target=1000):
             _seen0.add(_n0)
             _dedup.append((_n0, _f0))
         combos = _dedup
-        import random as _r
-        _r.seed(20260808)          # determinist — po të njëjtët 1000 agjentë çdo herë
         def _mk_ema():
-            f = _r.randint(2, 30); s = _r.randint(f + 3, 90)
+            f = _rr.randint(2, 30); s = _rr.randint(f + 3, 90)
             return f"EMA({f},{s})", _v_ema(f, s)
         def _mk_rsi():
-            p = _r.randint(3, 45); lo = _r.randint(18, 38); hi = _r.randint(62, 84)
+            p = _rr.randint(3, 45); lo = _rr.randint(18, 38); hi = _rr.randint(62, 84)
             return f"RSI({p},{lo}/{hi})", _v_rsi(p, lo, hi)
         def _mk_macd():
-            f = _r.randint(2, 16); s = _r.randint(f + 3, 40); g = _r.randint(3, 12)
+            f = _rr.randint(2, 16); s = _rr.randint(f + 3, 40); g = _rr.randint(3, 12)
             return f"MACD({f},{s},{g})", _v_macd(f, s, g)
         def _mk_boll():
-            p = _r.randint(5, 60); kk = round(_r.uniform(1.2, 3.0), 1)
+            p = _rr.randint(5, 60); kk = round(_rr.uniform(1.2, 3.0), 1)
             return f"BOLL({p},{kk})", _v_boll(p, kk)
         def _mk_mom():
-            p = _r.randint(2, 60); t = round(_r.uniform(0.15, 0.85), 2)
+            p = _rr.randint(2, 60); t = round(_rr.uniform(0.15, 0.85), 2)
             return f"MOM({p},{t})", _v_mom(p, t)
         def _mk_stoch():
-            kp = _r.randint(4, 40); dp = _r.randint(3, 9)
+            kp = _rr.randint(4, 40); dp = _rr.randint(3, 9)
             return f"STOCH({kp})", _v_stoch(kp, dp)
         def _mk_atr():
-            p = _r.randint(7, 40); m = round(_r.uniform(1.0, 3.0), 1)
+            p = _rr.randint(7, 40); m = round(_rr.uniform(1.0, 3.0), 1)
             return f"ATR({p},{m})", _v_atr(p, m)
         def _mk_emarsi():
-            f = _r.randint(3, 25); s = _r.randint(f + 2, 60)
-            lo = _r.randint(20, 40); hi = _r.randint(60, 85)
+            f = _rr.randint(3, 25); s = _rr.randint(f + 2, 60)
+            lo = _rr.randint(20, 40); hi = _rr.randint(60, 85)
             return f"EMARSI({f},{s},{lo}/{hi})", _v_ema_rsi(f, s, lo, hi)
         def _mk_dual():
-            f = _r.randint(2, 20); s = _r.randint(f * 2, f * 4 + 20)
+            f = _rr.randint(2, 20); s = _rr.randint(f * 2, f * 4 + 20)
             return f"DUALMOM({f},{s})", _v_dual_mom(f, s)
         def _mk_btrend():
-            p = _r.randint(5, 200)
+            p = _rr.randint(5, 200)
             return f"BTREND({p})", _v_breakeven_trend(p)
         makers = [_mk_ema, _mk_rsi, _mk_macd, _mk_boll, _mk_mom, _mk_stoch,
                   _mk_atr, _mk_emarsi, _mk_dual, _mk_btrend]
@@ -853,6 +853,9 @@ def generate_variant_strategies(target=1000):
         out.append({"name": name, "icon": "🧩", "fn": fn})
         if len(out) >= target:
             break
+    # përzierje deterministe — mostrat rrotulluese dalin nga të gjitha
+    # familjet në çdo cikël (jo vetëm nga një bllok i listës)
+    _rr.shuffle(out)
     return out
 
 

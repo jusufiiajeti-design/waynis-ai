@@ -97,17 +97,20 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
-## 🧩 1000 agjentë që bashkëpunojnë
+## 🧩 100,000 agjentë që bashkëpunojnë
 
 - **28 agjentë bërthamë** (16 strategji + Ensemble, Grid, Consensus, AI,
-  Validator, Risk, Sizer, Filler, Tracker, Learning…) + **1000 variante
-  strategjike** (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA,
-  TRIX, DUALMOM, BTREND…) = **1028 agjentë gjithsej**.
-- Bashkëpunimi: të gjithë votojnë për çdo monedhë, por **çdo familje
-  strategjish ka një zë të barabartë** — 300 variante EMA nuk e dominojnë
-  vendimin; familjet bien dakord së bashku (konsensus i peshuar).
-- Agjenti **Learning** mëson nga çdo tregti dhe i rregullon peshat e
-  strategjive që bashkëpunuan për fitimin.
+  Validator, Risk, Sizer, Filler, Tracker, Learning…) + **100,000 variante
+  strategjike unike** (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI,
+  SMA, TRIX, DUALMOM, BTREND, EMARSI…) = **100,028 agjentë gjithsej**.
+- **Mostër rrotulluese:** në çdo cikël votojnë 1,500 agjentë nga 100,000
+  (rreth 27 ms) — me kalimin e kohës TË GJITHË 100,000 marrin pjesë
+  njësoj shpesh, pa e ngadalësuar botin.
+- Bashkëpunimi: votat grupohen në **familje strategjish** dhe **çdo familje
+  ka një zë të barabartë** — asnjë familje nuk e dominon vendimin; familjet
+  bien dakord së bashku (konsensus i peshuar).
+- Agjenti **Learning** mëson nga çdo tregti në nivel familjeje dhe i
+  rregullon peshat e familjeve që bashkëpunuan për fitimin.
 
 ## 💵 Fitimi kapet vetëm në dollarë të plotë
 

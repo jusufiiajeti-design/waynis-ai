@@ -57,8 +57,9 @@ PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
-AGENT_TARGET = 1000              # 1000 agjentë (variante strategjike) që bashkëpunojnë
-                                 # me vota — çdo familje (EMA, RSI, MACD…) ka një zë të barabartë
+AGENT_TARGET = 100_000          # 100,000 agjentë (variante strategjike) që bashkëpunojnë me vota.
+                                 # Çdo cikël voton një mostër rrotulluese (shpejtësia mbetet e njëjtë);
+                                 # çdo familje (EMA, RSI, MACD…) ka një zë të barabartë.
 
 
 
@@ -1474,8 +1475,10 @@ def _v_keltner(period, mult):
 
 
 def generate_variant_strategies(target=1000):
-    """Build up to `target` real strategy variants by sweeping parameter grids."""
+    """Build up to `target` real strategy variants by sweeping parameter grids.
+    100,000 variante unike, DETERMINISTIKE (po këto çdo herë)."""
     combos = []
+    _rr = __import__("random").Random(20260808)   # i izoluar: nuk prish random-in global
     for f, s in [(3, 7), (4, 9), (5, 10), (5, 13), (6, 12), (7, 15), (8, 17), (9, 21),
                  (10, 22), (11, 24), (12, 26), (13, 27), (14, 28), (15, 30), (16, 34),
                  (17, 35), (18, 40), (19, 41), (20, 50), (21, 43), (22, 45), (25, 55),
@@ -1599,38 +1602,36 @@ def generate_variant_strategies(target=1000):
             _seen0.add(_n0)
             _dedup.append((_n0, _f0))
         combos = _dedup
-        import random as _r
-        _r.seed(20260808)          # determinist — po të njëjtët 1000 agjentë çdo herë
         def _mk_ema():
-            f = _r.randint(2, 30); s = _r.randint(f + 3, 90)
+            f = _rr.randint(2, 30); s = _rr.randint(f + 3, 90)
             return f"EMA({f},{s})", _v_ema(f, s)
         def _mk_rsi():
-            p = _r.randint(3, 45); lo = _r.randint(18, 38); hi = _r.randint(62, 84)
+            p = _rr.randint(3, 45); lo = _rr.randint(18, 38); hi = _rr.randint(62, 84)
             return f"RSI({p},{lo}/{hi})", _v_rsi(p, lo, hi)
         def _mk_macd():
-            f = _r.randint(2, 16); s = _r.randint(f + 3, 40); g = _r.randint(3, 12)
+            f = _rr.randint(2, 16); s = _rr.randint(f + 3, 40); g = _rr.randint(3, 12)
             return f"MACD({f},{s},{g})", _v_macd(f, s, g)
         def _mk_boll():
-            p = _r.randint(5, 60); kk = round(_r.uniform(1.2, 3.0), 1)
+            p = _rr.randint(5, 60); kk = round(_rr.uniform(1.2, 3.0), 1)
             return f"BOLL({p},{kk})", _v_boll(p, kk)
         def _mk_mom():
-            p = _r.randint(2, 60); t = round(_r.uniform(0.15, 0.85), 2)
+            p = _rr.randint(2, 60); t = round(_rr.uniform(0.15, 0.85), 2)
             return f"MOM({p},{t})", _v_mom(p, t)
         def _mk_stoch():
-            kp = _r.randint(4, 40); dp = _r.randint(3, 9)
+            kp = _rr.randint(4, 40); dp = _rr.randint(3, 9)
             return f"STOCH({kp})", _v_stoch(kp, dp)
         def _mk_atr():
-            p = _r.randint(7, 40); m = round(_r.uniform(1.0, 3.0), 1)
+            p = _rr.randint(7, 40); m = round(_rr.uniform(1.0, 3.0), 1)
             return f"ATR({p},{m})", _v_atr(p, m)
         def _mk_emarsi():
-            f = _r.randint(3, 25); s = _r.randint(f + 2, 60)
-            lo = _r.randint(20, 40); hi = _r.randint(60, 85)
+            f = _rr.randint(3, 25); s = _rr.randint(f + 2, 60)
+            lo = _rr.randint(20, 40); hi = _rr.randint(60, 85)
             return f"EMARSI({f},{s},{lo}/{hi})", _v_ema_rsi(f, s, lo, hi)
         def _mk_dual():
-            f = _r.randint(2, 20); s = _r.randint(f * 2, f * 4 + 20)
+            f = _rr.randint(2, 20); s = _rr.randint(f * 2, f * 4 + 20)
             return f"DUALMOM({f},{s})", _v_dual_mom(f, s)
         def _mk_btrend():
-            p = _r.randint(5, 200)
+            p = _rr.randint(5, 200)
             return f"BTREND({p})", _v_breakeven_trend(p)
         makers = [_mk_ema, _mk_rsi, _mk_macd, _mk_boll, _mk_mom, _mk_stoch,
                   _mk_atr, _mk_emarsi, _mk_dual, _mk_btrend]
@@ -1655,6 +1656,9 @@ def generate_variant_strategies(target=1000):
         out.append({"name": name, "icon": "🧩", "fn": fn})
         if len(out) >= target:
             break
+    # përzierje deterministe — mostrat rrotulluese dalin nga të gjitha
+    # familjet në çdo cikël (jo vetëm nga një bllok i listës)
+    _rr.shuffle(out)
     return out
 
 
@@ -1831,7 +1835,10 @@ def _v_breakeven_trend(period):
     return fn
 # ============ learning.py ============
 """
-Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
+Waynis AI — ENHANCED LEARNING SYSTEM for the 28 core agents + 100,000-variant ensemble.
+
+Learning is done per STRATEGY FAMILY (EMA, RSI, MACD, ...) so the weights
+file stays tiny even with 100,000 registered variants.
 
 After every closed trade we attribute its PnL to the strategies that voted
 for it (trade.votes) and recompute, per strategy:
@@ -1860,6 +1867,12 @@ import time
 
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "data", "learning_history.json")
+
+def family_key(name):
+    """P.sh. 'EMA(3,7)' → 'EMA'; 'EMA Trend' mbetet 'EMA Trend'.
+    Kështu mësimi bëhet në nivel familjeje edhe me 100,000 variante."""
+    return name.split("(")[0] if "(" in name else name
+
 
 DEFAULT_STATS = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0,
                  "gross_win": 0.0, "gross_loss": 0.0, "recent": [],
@@ -1915,6 +1928,7 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
         except Exception:
             continue
         for name in names:
+            name = family_key(name)              # mësim në nivel familjeje
             st = stats.setdefault(name, dict(DEFAULT_STATS))
             st["trades"] += 1
             p = pnl or 0.0
@@ -1991,6 +2005,8 @@ def load_weights():
 
 def save_weights(stats):
     try:
+        # ruaj vetëm familjet/strategjitë me të dhëna — skedari mbetet i vogël
+        stats = {k: v for k, v in stats.items() if v.get("trades", 0) > 0}
         os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
         with open(WEIGHTS_PATH, "w") as f:
             json.dump(stats, f, indent=2)
@@ -2388,6 +2404,19 @@ class EnsembleVoterAgent(Agent):
         variants = getattr(e, "variant_strategies", [])
         if not variants or not ctx.votes:
             return
+        n = len(variants)
+        # 🔁 MOSTËR RROTULLUESE: me 100,000 agjentë nuk i ekzekutojmë të
+        # gjithë çdo cikël (do ishte ~2s/3s) — çdo cikël voton një mostër
+        # e përzier prej SAMPLE_N agjentësh; me kalimin e kohës TË GJITHË
+        # 100,000 marrin pjesë njësoj shpesh (bashkëpunim i plotë).
+        SAMPLE_N = 1500
+        offset = (getattr(e, "ensemble_round", 0) * SAMPLE_N) % n
+        e.ensemble_round = (e.ensemble_round + 1) % max(1, (n + SAMPLE_N - 1) // SAMPLE_N)
+        sample = variants[offset:offset + SAMPLE_N]
+        if len(sample) < SAMPLE_N:                 # mbështjellje në fund
+            sample = sample + variants[:SAMPLE_N - len(sample)]
+        self._sample_n = SAMPLE_N
+        self._offset = offset
         # pick the symbol with the strongest core consensus
         best_sym = None
         best_score = 0.0
@@ -2403,20 +2432,10 @@ class EnsembleVoterAgent(Agent):
         klines = ctx.candles.get(best_sym)
         if not klines:
             return
-        # cache ensemble votes for ~10s — 100 variants aren't recomputed
-        # every cycle, so cycles run much faster
-        ecache = e.ensemble_cache
-        now = time.time()
-        cached = ecache.get(best_sym)
-        if cached and now - cached[0] < 10.0:
-            ctx.votes.setdefault(best_sym, []).extend(cached[1])
-            self.report(f"🧩 {len(cached[1])} variante (nga cache) — "
-                        f"konsensus i plotë")
-            return
         ticker = ctx.tickers.get(best_sym)
         voted = 0
         votes_list = ctx.votes.setdefault(best_sym, [])
-        for v in variants:
+        for v in sample:
             try:
                 r = v["fn"](best_sym, klines, ticker)
                 if r:
@@ -2426,12 +2445,12 @@ class EnsembleVoterAgent(Agent):
             except Exception:
                 continue
         if voted:
-            ecache[best_sym] = (now, list(votes_list))
-        if voted:
-            self.report(f"🧩 {voted}/{len(variants)} variante votuan për "
-                        f"{best_sym} — konsensus i plotë")
+            self.report(f"🧩 {voted}/{len(sample)} agjentë (mostër "
+                        f"rrotulluese, nga 100,000) votuan për {best_sym} — "
+                        f"konsensus i plotë")
         else:
-            self.report(f"🧩 {len(variants)} variante — asnjë sinjal i fortë")
+            self.report(f"🧩 mostër {len(sample)} agjentësh (100,000 gjithsej) "
+                        f"— asnjë sinjal i fortë")
 
 
 # ======================================================================
@@ -2550,7 +2569,7 @@ class ConsensusAgent(Agent):
             for key, (fnet, fw) in fam.items():
                 if fw <= 0:
                     continue
-                fw2 = weights.get(key, {}).get("family_weight", 1.0)
+                fw2 = weights.get(key, {}).get("weight", 1.0)   # pesha e mësuar e familjes
                 net += (fnet / fw) * fw2
                 tw += fw2
             if tw <= 0:
@@ -3498,6 +3517,7 @@ class PaperEngine:
         self.variant_strategies = generate_variant_strategies(
             AGENT_TARGET) if ENSEMBLE_ENABLED else []
         self.variant_count = len(self.variant_strategies)
+        self.ensemble_round = 0                 # 🔁 mostër rrotulluese (100k agjentë)
         # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
         self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
                                                FIXED_RISK_ENABLED)

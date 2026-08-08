@@ -196,6 +196,19 @@ class EnsembleVoterAgent(Agent):
         variants = getattr(e, "variant_strategies", [])
         if not variants or not ctx.votes:
             return
+        n = len(variants)
+        # 🔁 MOSTËR RROTULLUESE: me 100,000 agjentë nuk i ekzekutojmë të
+        # gjithë çdo cikël (do ishte ~2s/3s) — çdo cikël voton një mostër
+        # e përzier prej SAMPLE_N agjentësh; me kalimin e kohës TË GJITHË
+        # 100,000 marrin pjesë njësoj shpesh (bashkëpunim i plotë).
+        SAMPLE_N = 1500
+        offset = (getattr(e, "ensemble_round", 0) * SAMPLE_N) % n
+        e.ensemble_round = (e.ensemble_round + 1) % max(1, (n + SAMPLE_N - 1) // SAMPLE_N)
+        sample = variants[offset:offset + SAMPLE_N]
+        if len(sample) < SAMPLE_N:                 # mbështjellje në fund
+            sample = sample + variants[:SAMPLE_N - len(sample)]
+        self._sample_n = SAMPLE_N
+        self._offset = offset
         # pick the symbol with the strongest core consensus
         best_sym = None
         best_score = 0.0
@@ -211,20 +224,10 @@ class EnsembleVoterAgent(Agent):
         klines = ctx.candles.get(best_sym)
         if not klines:
             return
-        # cache ensemble votes for ~10s — 100 variants aren't recomputed
-        # every cycle, so cycles run much faster
-        ecache = e.ensemble_cache
-        now = time.time()
-        cached = ecache.get(best_sym)
-        if cached and now - cached[0] < 10.0:
-            ctx.votes.setdefault(best_sym, []).extend(cached[1])
-            self.report(f"🧩 {len(cached[1])} variante (nga cache) — "
-                        f"konsensus i plotë")
-            return
         ticker = ctx.tickers.get(best_sym)
         voted = 0
         votes_list = ctx.votes.setdefault(best_sym, [])
-        for v in variants:
+        for v in sample:
             try:
                 r = v["fn"](best_sym, klines, ticker)
                 if r:
@@ -234,12 +237,12 @@ class EnsembleVoterAgent(Agent):
             except Exception:
                 continue
         if voted:
-            ecache[best_sym] = (now, list(votes_list))
-        if voted:
-            self.report(f"🧩 {voted}/{len(variants)} variante votuan për "
-                        f"{best_sym} — konsensus i plotë")
+            self.report(f"🧩 {voted}/{len(sample)} agjentë (mostër "
+                        f"rrotulluese, nga 100,000) votuan për {best_sym} — "
+                        f"konsensus i plotë")
         else:
-            self.report(f"🧩 {len(variants)} variante — asnjë sinjal i fortë")
+            self.report(f"🧩 mostër {len(sample)} agjentësh (100,000 gjithsej) "
+                        f"— asnjë sinjal i fortë")
 
 
 # ======================================================================
@@ -358,7 +361,7 @@ class ConsensusAgent(Agent):
             for key, (fnet, fw) in fam.items():
                 if fw <= 0:
                     continue
-                fw2 = weights.get(key, {}).get("family_weight", 1.0)
+                fw2 = weights.get(key, {}).get("weight", 1.0)   # pesha e mësuar e familjes
                 net += (fnet / fw) * fw2
                 tw += fw2
             if tw <= 0:

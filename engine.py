@@ -133,6 +133,7 @@ class PaperEngine:
         self.variant_strategies = generate_variant_strategies(
             AGENT_TARGET) if ENSEMBLE_ENABLED else []
         self.variant_count = len(self.variant_strategies)
+        self.ensemble_round = 0                 # 🔁 mostër rrotulluese (100k agjentë)
         # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
         self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
                                                FIXED_RISK_ENABLED)

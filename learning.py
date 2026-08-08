@@ -1,5 +1,8 @@
 """
-Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
+Waynis AI — ENHANCED LEARNING SYSTEM for the 28 core agents + 100,000-variant ensemble.
+
+Learning is done per STRATEGY FAMILY (EMA, RSI, MACD, ...) so the weights
+file stays tiny even with 100,000 registered variants.
 
 After every closed trade we attribute its PnL to the strategies that voted
 for it (trade.votes) and recompute, per strategy:
@@ -28,6 +31,12 @@ import time
 
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "data", "learning_history.json")
+
+def family_key(name):
+    """P.sh. 'EMA(3,7)' → 'EMA'; 'EMA Trend' mbetet 'EMA Trend'.
+    Kështu mësimi bëhet në nivel familjeje edhe me 100,000 variante."""
+    return name.split("(")[0] if "(" in name else name
+
 
 DEFAULT_STATS = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0,
                  "gross_win": 0.0, "gross_loss": 0.0, "recent": [],
@@ -83,6 +92,7 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
         except Exception:
             continue
         for name in names:
+            name = family_key(name)              # mësim në nivel familjeje
             st = stats.setdefault(name, dict(DEFAULT_STATS))
             st["trades"] += 1
             p = pnl or 0.0
@@ -159,6 +169,8 @@ def load_weights():
 
 def save_weights(stats):
     try:
+        # ruaj vetëm familjet/strategjitë me të dhëna — skedari mbetet i vogël
+        stats = {k: v for k, v in stats.items() if v.get("trades", 0) > 0}
         os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
         with open(WEIGHTS_PATH, "w") as f:
             json.dump(stats, f, indent=2)

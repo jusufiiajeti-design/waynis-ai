@@ -554,7 +554,7 @@
       <div id="realStatus" style="display:none;margin:4px 0 8px;padding:10px;border-radius:10px;
         background:var(--card2);border:1px solid var(--line);font-size:11.5px;color:var(--mut);line-height:1.7"></div>
       <div class="set">
-        <div><div class="l">Cikli i botit</div><div class="d">1000 agjentë votojnë · koordinatori ekzekuton çdo <b id="cycleSec">4</b> sekonda</div></div>
+        <div><div class="l">Cikli i botit</div><div class="d">100,000 agjentë votojnë me mostër rrotulluese · koordinatori ekzekuton çdo <b id="cycleSec">4</b> sekonda</div></div>
         <div class="kbd">LIVE</div>
       </div>
       <div class="set">
@@ -962,8 +962,10 @@ function renderAgentsLine(agents){
   const nv = ens.variants||0;
   const core = agents.filter(a=>a.name!=="Ensemble");
   const nc = core.length;
-  $("agentsLine").innerHTML = `🤖 <b>${nc} agjentë bërthamë</b> + 🧩 <b>${nv} variante strategjike</b> ` +
-    `= <b>${nc+nv} agjentë</b> që bashkëpunojnë: çdo familje (EMA, RSI, MACD…) ka një zë të barabartë`;
+  const nvf = nv.toLocaleString("en-US");
+  const total = (nc+nv).toLocaleString("en-US");
+  $("agentsLine").innerHTML = `🤖 <b>${nc} agjentë bërthamë</b> + 🧩 <b>${nvf} variante strategjike</b> ` +
+    `= <b>${total} agjentë</b> që bashkëpunojnë: çdo cikël voton një mostër rrotulluese, çdo familje (EMA, RSI, MACD…) ka një zë të barabartë`;
 }
 function renderAgentsGrid(agents){
   if(!agents) return;
@@ -982,7 +984,7 @@ function renderAgentsGrid(agents){
   }).join("");
   // ensemble tile
   html += `<div class="ag ${active==="Ensemble"?"active":""}" style="border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.08)"
-    title="${nv} agjentë strategjikë (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, TRIX...) votojnë së bashku për kandidatin kryesor">
+    title="${nv.toLocaleString("en-US")} agjentë strategjikë (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, TRIX...) — çdo cikël një mostër rrotulluese voton së bashku">
     <span class="ai">🧩</span><span class="an">Ensemble</span>
     <span class="aw">×${nv}</span></div>`;
   $("agentsGrid").innerHTML = html;
