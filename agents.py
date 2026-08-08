@@ -243,6 +243,81 @@ class EnsembleVoterAgent(Agent):
 
 
 # ======================================================================
+# 🔀 GRID BALANCER — actively finds the missing side of the grid.
+# If longs dominate → it searches for overbought coins (RSI high) and
+# queues a SHORT; if shorts dominate → it finds oversold coins (RSI low)
+# and queues a LONG. This keeps the portfolio two-sided like a grid.
+# ======================================================================
+class GridBalancerAgent(Agent):
+    step, name, icon = 1, "Grid Balancer", "🔀"
+    role = "Balancues — kërkon në mënyrë aktive anën e munguar (SHORT/LONG)"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        if e.mode == "real":
+            return                      # spot real = vetëm LONG
+        open_pos = e.open_positions()
+        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
+        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
+        if len(open_pos) >= MAX_OPEN:
+            return
+        imbalance = n_long - n_short
+
+        # anë që duhet (palca e gridit)
+        want = "SHORT" if imbalance >= 2 else ("LONG" if imbalance <= -2 else None)
+        if not want:
+            return
+        best = None
+        for sym, klines in ctx.candles.items():
+            if sym in {p["symbol"] for p in open_pos}:
+                continue
+            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
+                continue
+            if len(klines) < 30:
+                continue
+            closes = [c["c"] for c in klines]
+            r = rsi(closes)
+            price = (ctx.tickers.get(sym) or {}).get("price") or closes[-1]
+            if want == "SHORT" and r > 66:            # i mbingarkuar → SHORT
+                conf = 60 + (r - 66) * 1.2
+                if best is None or conf > best["confidence"]:
+                    best = {"symbol": sym, "direction": "SHORT",
+                            "entry": price, "confidence": min(conf, 88),
+                            "rsi": r}
+            elif want == "LONG" and r < 34:           # i mbishitur → LONG
+                conf = 60 + (34 - r) * 1.2
+                if best is None or conf > best["confidence"]:
+                    best = {"symbol": sym, "direction": "LONG",
+                            "entry": price, "confidence": min(conf, 88),
+                            "rsi": r}
+        if best:
+            sym = best["symbol"]
+            # vendose DREJTPËRDREJT te picks — Filler-i e hap pavarësisht
+            # konsensusit (kjo e mban grid-in të balancuar gjithmonë)
+            entry = best["entry"]
+            if best["direction"] == "LONG":
+                tp = entry * (1 + TAKE_PROFIT)
+                sl = entry * (1 - STOP_LOSS)
+            else:
+                tp = entry * (1 - TAKE_PROFIT)
+                sl = entry * (1 + STOP_LOSS)
+            pick = {"symbol": sym, "direction": best["direction"],
+                    "entry": entry, "tp": tp, "sl": sl,
+                    "confidence": best["confidence"],
+                    "supporting": ["GridBalancer"]}
+            # mos e dyfisho nëse konsensusi e ka tashmë
+            if not any(p["symbol"] == sym and p["direction"] == pick["direction"]
+                       for p in ctx.picks):
+                ctx.picks.append(pick)
+            self.report(f"🔀 Grid: kërkoj {want} — {sym} (RSI {best['rsi']:.0f}) "
+                        f"për ekuilibër {n_long}L/{n_short}S",
+                        sym, best["direction"], best["confidence"])
+        else:
+            self.report(f"🔀 Grid: {n_long}L/{n_short}S — "
+                        f"nuk gjeta sinjal {want} këtë cikël")
+
+
+# ======================================================================
 # 🗳️ CONSENSUS (combines votes with learning weights)
 # ======================================================================
 class ConsensusAgent(Agent):
@@ -325,6 +400,17 @@ class ConsensusAgent(Agent):
             })
 
         if not candidates:
+            # nëse balancuesi i grid-it ka vendosur një pick, vazhdojmë
+            # me të (nuk ndalemi) — kështu grid-i mbetet i balancuar
+            if getattr(ctx, "picks", []):
+                ctx.chosen = ctx.picks[0]
+                self.report(f"🔀 Pa konsensus — vazhdoj me pick-un e "
+                            f"balancuesit ({ctx.picks[0]['symbol']} "
+                            f"{ctx.picks[0]['direction']})",
+                            ctx.picks[0]["symbol"],
+                            ctx.picks[0]["direction"],
+                            ctx.picks[0]["confidence"])
+                return
             self.report(f"Pa konsensus (pragu adaptiv {threshold:.2f}) — "
                         f"boti pret sinjale më të forta")
             ctx.stop = True
@@ -340,9 +426,18 @@ class ConsensusAgent(Agent):
                          key=lambda c: c["confidence"], default=None)
         picks = [c for c in (best_long, best_short) if c]
         picks.sort(key=lambda c: c["confidence"], reverse=True)
-        ctx.chosen = picks[0]
-        ctx.picks = picks                 # both directions queued
-        ctx.votes_for_trade = picks[0]["supporting"]
+        ctx.chosen = picks[0] if picks else None
+        # ruaj picks ekzistuese të balancuesit + shto ato të konsensusit
+        existing = list(getattr(ctx, "picks", []))
+        seen = {(p["symbol"], p["direction"]) for p in existing}
+        for p in picks:
+            if (p["symbol"], p["direction"]) not in seen:
+                existing.append(p)
+                seen.add((p["symbol"], p["direction"]))
+        ctx.picks = existing
+        ctx.votes_for_trade = (picks[0]["supporting"] if picks
+                               else (existing[0]["supporting"]
+                                     if existing else []))
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
@@ -981,6 +1076,7 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
-              [EnsembleVoterAgent, ConsensusAgent, AIPredictorAgent,
-               RegimeFilterAgent, ValidatorAgent, RiskManagerAgent,
-               SizerAgent, FillerAgent, TrackerAgent, LearningAgent])
+              [EnsembleVoterAgent, GridBalancerAgent, ConsensusAgent,
+               AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
+               RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
+               LearningAgent])
