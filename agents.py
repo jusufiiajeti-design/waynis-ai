@@ -85,6 +85,7 @@ class CycleContext:
         self.candles = {}
         self.votes = {}            # symbol -> [(name, direction, conf)]
         self.chosen = None         # consensus candidate
+        self.picks = []            # grid: LONG + SHORT candidates
         self.votes_for_trade = []  # strategy names behind the chosen signal
         self.qty = 0.0
         self.trade_id = None
@@ -331,8 +332,17 @@ class ConsensusAgent(Agent):
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         best = candidates[0]
-        ctx.chosen = best
-        ctx.votes_for_trade = best["supporting"]
+        # 🔀 GRID: pick the best LONG and the best SHORT together, so both
+        # directions can open in the same cycle (grid-style trading).
+        best_long = max((c for c in candidates if c["direction"] == "LONG"),
+                        key=lambda c: c["confidence"], default=None)
+        best_short = max((c for c in candidates if c["direction"] == "SHORT"),
+                         key=lambda c: c["confidence"], default=None)
+        picks = [c for c in (best_long, best_short) if c]
+        picks.sort(key=lambda c: c["confidence"], reverse=True)
+        ctx.chosen = picks[0]
+        ctx.picks = picks                 # both directions queued
+        ctx.votes_for_trade = picks[0]["supporting"]
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
@@ -716,43 +726,56 @@ class FillerAgent(Agent):
     async def execute(self, ctx, idx):
         e = self.engine
         sig = ctx.chosen
-        if ctx.qty <= 0:
-            self.report("Madhësi zero — urdhri anulohet",
-                        sig["symbol"], sig["direction"], sig["confidence"])
-            ctx.stop = True
+        if not sig:
             return
 
         entry = sig.get("entry", 0)
-        if sig["direction"] == "LONG":
-            sig["tp"] = entry * (1 + TAKE_PROFIT)
-            sig["sl"] = entry * (1 - STOP_LOSS)
-        else:
-            sig["tp"] = entry * (1 - TAKE_PROFIT)
-            sig["sl"] = entry * (1 + STOP_LOSS)
 
-        if e.mode == "real":
-            ctx.trade_id = await e.real_open(sig, ctx.qty)
-            if not ctx.trade_id:
-                self.report(f"💰 REAL: urdhri dështoi për {sig['symbol']}",
-                            sig["symbol"], sig["direction"], sig["confidence"])
-                ctx.stop = True
-                return
-            self.report(f"💰 REAL {sig['direction']} {sig['symbol']} "
-                        f"{ctx.qty:.6f} @ {sig['entry']:.6g} — TP/SL në exchange",
+        # 🔀 GRID: open both directions (LONG + SHORT) if slots allow
+        opened = 0
+        for pick in getattr(ctx, "picks", [sig]):
+            # respect fixed-risk sizing for each pick
+            pp = pick.get("entry") or entry \
+                or (ctx.tickers.get(pick["symbol"]) or {}).get("price") or 0
+            if not pp or pp <= 0:
+                continue
+            psl = pick.get("sl")
+            if psl is None:
+                psl = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
+                    else pp * (1 + STOP_LOSS)
+            pstop = abs(pp - psl) / pp
+            pqty = 0.0
+            if e.fixed_risk_enabled:
+                ntl = e.fixed_entry_usd
+                pqty = min(ntl / pp,
+                           e.fixed_max_loss_usd / (pp * pstop)) if pstop > 0 else 0
+            else:
+                pqty = (e.account()["equity"] * 0.35 * e.effective_mult()) / pp
+            if pqty <= 0:
+                continue
+            if len(e.open_positions()) >= MAX_OPEN:
+                break
+            ptp = pp * (1 + TAKE_PROFIT) if pick["direction"] == "LONG" \
+                else pp * (1 - TAKE_PROFIT)
+            psl2 = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
+                else pp * (1 + STOP_LOSS)
+            sig2 = dict(pick, entry=pp, tp=ptp, sl=psl2)
+            tid = e._open_trade(sig2, pqty, votes=ctx.votes_for_trade)
+            if tid:
+                opened += 1
+                e._event("fill",
+                         f"{pick['direction']} {pick['symbol']} {pqty:.4f} @ "
+                         f"{pp:.6g} · konsensus {pick['confidence']:.0f}%",
+                         pick["symbol"])
+        if opened:
+            ctx.trade_id = True
+            d = "+".join(f"{p['direction']} {p['symbol'].split('-')[0]}"
+                         for p in ctx.picks[:2])
+            self.report(f"🔀 Grid: hapi {opened} pozicione — {d}",
                         sig["symbol"], sig["direction"], sig["confidence"])
-            await asyncio.sleep(1.0)
-            return
-
-        ctx.trade_id = e._open_trade(sig, ctx.qty, votes=ctx.votes_for_trade)
-        self.report(f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
-                    f"{sig['entry']:.6g} — nga {len(ctx.votes_for_trade)} strategji",
-                    sig["symbol"], sig["direction"], sig["confidence"])
-        if ctx.trade_id:
-            e._event("fill",
-                     f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
-                     f"{sig['entry']:.6g} · konsensus {sig['confidence']:.0f}% · "
-                     f"{len(ctx.votes_for_trade)} strategji",
-                     sig["symbol"])
+        else:
+            self.report("Asnjë pozicion i hapur — pa hapësirë ose madhësi zero",
+                        sig["symbol"], sig["direction"], sig["confidence"])
         await asyncio.sleep(0.6)
 
 
