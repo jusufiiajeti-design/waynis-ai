@@ -181,7 +181,54 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 
 
 # ======================================================================
-# 🗳️ 12 — CONSENSUS (combines votes with learning weights)
+# 🧩 ENSEMBLE VOTER — runs up to 500 strategy variants on the leading
+# candidate, so the final decision reflects the whole ensemble.
+# ======================================================================
+class EnsembleVoterAgent(Agent):
+    step, name, icon = 1, "Ensemble", "🧩"
+    role = "500 variante strategjike votojnë për kandidatin kryesor"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        variants = getattr(e, "variant_strategies", [])
+        if not variants or not ctx.votes:
+            return
+        # pick the symbol with the strongest core consensus
+        best_sym = None
+        best_score = 0.0
+        for sym, votes in ctx.votes.items():
+            net = 0.0
+            for _, d, conf in votes:
+                net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
+            if abs(net) > best_score:
+                best_score = abs(net)
+                best_sym = sym
+        if not best_sym:
+            return
+        klines = ctx.candles.get(best_sym)
+        if not klines:
+            return
+        ticker = ctx.tickers.get(best_sym)
+        voted = 0
+        votes_list = ctx.votes.setdefault(best_sym, [])
+        for v in variants:
+            try:
+                r = v["fn"](best_sym, klines, ticker)
+                if r:
+                    votes_list.append((v["name"], r["direction"],
+                                       r["confidence"]))
+                    voted += 1
+            except Exception:
+                continue
+        if voted:
+            self.report(f"🧩 {voted}/{len(variants)} variante votuan për "
+                        f"{best_sym} — konsensus i plotë")
+        else:
+            self.report(f"🧩 {len(variants)} variante — asnjë sinjal i fortë")
+
+
+# ======================================================================
+# 🗳️ CONSENSUS (combines votes with learning weights)
 # ======================================================================
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
@@ -813,6 +860,6 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
-              [ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
-               ValidatorAgent, RiskManagerAgent, SizerAgent,
-               FillerAgent, TrackerAgent, LearningAgent])
+              [EnsembleVoterAgent, ConsensusAgent, AIPredictorAgent,
+               RegimeFilterAgent, ValidatorAgent, RiskManagerAgent,
+               SizerAgent, FillerAgent, TrackerAgent, LearningAgent])

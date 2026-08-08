@@ -324,8 +324,8 @@
     </div>
 
     <div class="card">
-      <h3>⚙️ 6-Cycle Execution Pipeline · 26 Agjentë</h3>
-      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 26 agjentët…</div>
+      <h3>⚙️ 6-Cycle Execution Pipeline · 26 Agjentë + 🧩 Ensemble</h3>
+      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar agjentët dhe ensemblin…</div>
       <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
@@ -933,13 +933,18 @@ function renderPipeline(pp){
 }
 function renderAgentsLine(agents){
   if(!agents) return;
-  $("agentsLine").innerHTML = "🤖 <b>26 agjentë bashkëpunues</b>: 16 strategji votojnë → " +
-    "🗳️ konsensus me pesha të mësuara · 🎓 mësojnë pas çdo tregtie";
+  const ens = (S.status&&S.status.ensemble)||{};
+  const nv = ens.variants||0;
+  $("agentsLine").innerHTML = `🤖 <b>26 agjentë bërthamë</b> (16 strategji) + 🧩 <b>${nv} variante</b> ` +
+    `= ${ens.total_strategies||(nv+16)} strategji që votojnë së bashku`;
 }
 function renderAgentsGrid(agents){
   if(!agents) return;
   const active = S.status && S.status.pipeline ? S.status.pipeline.agent : "";
-  $("agentsGrid").innerHTML = agents.map(a=>{
+  const ens = (S.status&&S.status.ensemble)||{};
+  const nv = ens.variants||0;
+  const core = agents.filter(a=>a.name!=="Ensemble");
+  let html = core.map(a=>{
     let w = "";
     if(a.kind==="strategy" && a.trades>0){
       const cls = a.weight>=1.0 ? "" : "low";
@@ -948,6 +953,12 @@ function renderAgentsGrid(agents){
     return `<div class="ag ${a.name===active?"active":""}" title="${a.role}">
       <span class="ai">${a.icon}</span><span class="an">${a.name}</span>${w}</div>`;
   }).join("");
+  // ensemble tile
+  html += `<div class="ag ${active==="Ensemble"?"active":""}" style="border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.08)"
+    title="${nv} variante strategjike (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, TRIX...) votojnë për kandidatin kryesor">
+    <span class="ai">🧩</span><span class="an">Ensemble</span>
+    <span class="aw">×${nv}</span></div>`;
+  $("agentsGrid").innerHTML = html;
 }
 
 /* ================= AI reasoning panel ================= */

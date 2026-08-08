@@ -33,13 +33,15 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
                     RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
                     RISK_RESUME_MIN,
-                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD)
+                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
+                    ENSEMBLE_ENABLED, AGENT_TARGET)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
+from strategies import generate_variant_strategies
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -127,6 +129,10 @@ class PaperEngine:
         self.risk_state = {"mode": "normal", "mult": self.compound_mult,
                            "pause_until": 0.0, "last_check": 0.0,
                            "wr": None, "net": None}
+        # 🧩 ensemble — hundreds of strategy variants vote with the core
+        self.variant_strategies = generate_variant_strategies(
+            AGENT_TARGET) if ENSEMBLE_ENABLED else []
+        self.variant_count = len(self.variant_strategies)
         # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
         self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
                                                FIXED_RISK_ENABLED)

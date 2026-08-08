@@ -43,6 +43,11 @@ FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
 FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
 FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
 
+# ---- 🧩 ensemble (hundreds of strategy variants) ----
+ENSEMBLE_ENABLED = True          # 500 strategy variants vote with the core
+AGENT_TARGET = 500               # how many variants to generate (max 500)
+
+
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
