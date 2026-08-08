@@ -550,13 +550,13 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
-        mult = e.effective_mult()                  # ×2 normal, ×1 kur risk aktiv
+        mult = e.effective_mult()                  # ×N normal, ×1 kur risk aktiv
         if e.mode == "real":
             bal = e.real_balance()
-            notional = bal * REAL_MAX_NOTIONAL_PCT * mult
+            notional = bal * min(REAL_MAX_NOTIONAL_PCT * mult, 0.40)
             ctx.qty = notional / entry if entry else 0
             self.report(f"💰 REAL {ctx.qty:.6f} @ {entry:.6g} (~${notional:.2f}, "
-                        f"maks {REAL_MAX_NOTIONAL_PCT*100*mult:.0f}% e balancës, ×{mult:g})",
+                        f"maks {min(REAL_MAX_NOTIONAL_PCT*100*mult,40):.0f}% e balancës, ×{mult:g})",
                         sig["symbol"], sig["direction"], sig["confidence"])
             return
 
@@ -571,7 +571,10 @@ class SizerAgent(Agent):
         stop_dist = abs(entry - sl)
         risk_amount = base * TRADE_RISK * mult
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
-        max_pct = min(0.35 * mult, 0.6)          # 35% ×1 → 60% ×2 (cap)
+        # clear progression: ×1=35% ×2=50% ×3=60% ×4=70% ×5=80%
+        # (SL 0.35% mban rrezikun e llogarisë ~0.28% edhe në ×5)
+        pct_map = {1: 0.35, 2: 0.50, 3: 0.60, 4: 0.70, 5: 0.80}
+        max_pct = pct_map.get(int(mult), 0.80)
         if qty * entry > equity * max_pct:
             qty = equity * max_pct / entry
         ctx.qty = qty

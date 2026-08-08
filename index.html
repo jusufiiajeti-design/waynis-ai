@@ -456,11 +456,14 @@
         <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
       </div>
       <div class="set" style="margin-top:2px">
-        <div><div class="l">💥 Forca e komponimit</div><div class="d">×1 normal · ×2 = pozicione dyfish më të mëdha (fitime 2×, por edhe humbje 2×)</div></div>
+        <div><div class="l">💥 Forca e komponimit</div><div class="d">×1 normal · ×5 agresiv — Risk Manager-i e ul automatikisht në ×1 kur humbjet fillojnë</div></div>
         <div style="display:flex;gap:6px;align-items:center">
           <select id="cmSel" class="sel" style="max-width:90px" onchange="saveCompoundMult()">
             <option value="1">×1</option>
             <option value="2">×2</option>
+            <option value="3">×3</option>
+            <option value="4">×4</option>
+            <option value="5">×5</option>
           </select>
         </div>
       </div>
@@ -834,7 +837,7 @@ function renderStatus(){
     rb.style.background="rgba(34,197,94,.1)";
     rb.style.border="1px solid rgba(34,197,94,.4)";
     rb.style.color="var(--green)";
-    rb.textContent=`🛡️ Risk Manager në vëzhgim · ×2 aktiv — do të ulë në ×1 nëse humbjet fillojnë`;
+    rb.textContent=`🛡️ Risk Manager në vëzhgim · ×${rk.effective_mult} aktiv — do të ulë në ×1 nëse humbjet fillojnë`;
   } else { rb.style.display="none"; }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
@@ -1368,7 +1371,7 @@ async function saveCompoundMult(){
   try{
     const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({compound_mult:v})});
     S.status.compound_mult=d.compound_mult;
-    toast(v>=2?"💥 Komponimi ×2 — pozicione dyfish (rrezik dyfish)":"Komponimi ×1 normal");
+    toast(d.compound_mult>=2?`💥 Komponimi ×${d.compound_mult} — fitime ×${d.compound_mult}, por Risk Manager-i mbron humbjet`:"Komponimi ×1 normal");
     refreshStatus();
   }catch(e){ toast("Gabim"); }
 }
