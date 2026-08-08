@@ -45,8 +45,8 @@ FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
 FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
-ENSEMBLE_ENABLED = True          # 500 strategy variants vote with the core
-AGENT_TARGET = 500               # how many variants to generate (max 500)
+ENSEMBLE_ENABLED = True          # strategy variants vote with the core
+AGENT_TARGET = 100               # how many variants to generate (100)
 
 
 
