@@ -133,6 +133,7 @@
   @keyframes stepPulse{0%,100%{box-shadow:0 0 12px rgba(34,197,94,.2)}
     50%{box-shadow:0 0 22px rgba(34,197,94,.45)}}
   .pipe-msg{font-size:12.5px;color:var(--mut);line-height:1.5;min-height:38px}
+  .hero-legend{font-size:10.5px;color:var(--mut);margin-top:4px}
   .agents-line{font-size:11px;color:var(--dim);background:rgba(167,139,250,.08);
     border:1px dashed rgba(167,139,250,.35);border-radius:10px;padding:8px 10px;
     margin:-2px 0 10px;line-height:1.6}
@@ -308,7 +309,9 @@
       <div class="hero-grid">
         <div class="hero-main">
           <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span></div>
-          <div class="sub">të fituara që nga fillimi · Equity: <span id="eqVal">—</span></div>
+          <div class="sub"><span class="ky">Të kyçura:</span> <b id="lockVal">—</b>
+            <span class="pro">· Në proces:</span> <b id="openVal">—</b>
+            · Equity: <span id="eqVal">—</span></div>
         </div>
         <div class="hero-side">
           <div class="hstat"><span class="hl" id="scanLbl">GRAFIKË TË SKANUAR</span><span class="hv" id="scanVal">0</span></div>
@@ -316,6 +319,7 @@
         </div>
       </div>
       <div class="hero-foot">Sot: <b id="todayVal">+0.00 USDT</b> · <span id="sessMeta">—</span></div>
+      <div class="hero-legend">💡 Të kyçura = ruhen (në llogari) · Në proces = lëvizin me çmimet</div>
     </div>
 
     <div class="stats">
@@ -850,6 +854,12 @@ function renderStatus(){
   $("todayVal").textContent = sign(st.pnl_24h)+fmt(st.pnl_24h)+" USDT";
   $("todayVal").className = st.pnl_24h>=0?"up":"dn";
   $("eqVal").textContent = fmt(a.equity)+" USDT";
+  // "Të kyçura" = fitimi i mbyllur (ruhet; ndryshon vetëm kur mbyllet një tregti)
+  // "Në proces" = pozicionet e hapura (lëvizin me tregun çdo sekondë)
+  const locked = st.realized || 0, openv = a.unrealized || 0;
+  const lk = $("lockVal"), ov = $("openVal");
+  lk.textContent = (locked>=0?"+":"")+fmt(locked)+" USDT"; lk.className = locked>=0?"up":"dn";
+  ov.textContent = (openv>=0?"+":"")+fmt(openv)+" USDT"; ov.className = openv>=0?"up":"dn";
   const p=st.pnl_24h;
   const e=$("pnl24"); e.textContent = sign(p)+fmt(p)+" USDT"; e.className="v "+(p>=0?"up":"dn");
   $("winrate").textContent = fmt(st.win_rate,1)+"%";
