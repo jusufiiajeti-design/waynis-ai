@@ -795,7 +795,9 @@ function tickSession(){
 setInterval(tickSession, 1000);
 
 /* ================= helpers ================= */
-const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—"
+  : Number.isInteger(n) ? n.toLocaleString("en-US")
+  : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtPrice = p => p==null? "—" : Number(p).toLocaleString("en-US",{maximumFractionDigits: p>=1000?2 : p>=1?4 : 8});
 const fmtTime = iso => { try{ return new Date(iso).toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } };
 const sign = n => n>0?"+":"";
