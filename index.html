@@ -468,20 +468,23 @@
         </div>
       </div>
       <div class="set" style="border-top:1px dashed rgba(56,189,248,.4);margin-top:6px">
-        <div><div class="l">💵 Rrezik Fiks në $</div><div class="d">Hyrje fikse <b id="fxEntryLbl">$3</b> për tregti · humbje max <b id="fxLossLbl">$1</b> — <b>pavarësisht ×1–×5</b></div></div>
+        <div><div class="l">💵 Rrezik Fiks në $</div><div class="d">Çdo tregti hyn me <b id="fxEntryLbl">$3</b> · humbje max <b id="fxLossLbl">$1</b> — pavarësisht ×1–×5</div></div>
         <div class="switch" id="swFx" onclick="toggleFixedRisk()"></div>
       </div>
-      <div class="set" style="margin-top:2px">
-        <div><div class="l">Hyrja për tregti</div><div class="d">$ USDT çdo herë</div></div>
-        <input type="number" id="fxEntry" min="1" step="1" value="3" class="inp" style="width:64px" onchange="saveFixedRisk()">
+      <div style="margin:10px 0 2px;font-size:12px;color:var(--mut)">Shumat e tua (të ruhen në server):</div>
+      <div class="set" style="margin-top:4px">
+        <div><div class="l">Hyrja për tregti</div><div class="d">USDT çdo herë — vendose si të duash</div></div>
+        <input type="number" id="fxEntry" min="1" step="0.5" value="3" class="inp" style="width:84px">
       </div>
       <div class="set">
-        <div><div class="l">Humbja maksimale</div><div class="d">$ USDT — asnjëherë më shumë se kjo</div></div>
-        <input type="number" id="fxLoss" min="0.25" step="0.25" value="1" class="inp" style="width:64px" onchange="saveFixedRisk()">
+        <div><div class="l">Humbja maksimale</div><div class="d">USDT — asnjëherë më shumë se kjo</div></div>
+        <input type="number" id="fxLoss" min="0.25" step="0.25" value="1" class="inp" style="width:84px">
       </div>
+      <button class="btn btn-green" id="btnFxSave" style="width:100%;margin:8px 0 2px" onclick="saveFixedRisk()">💾 Ruaj në server</button>
+      <div id="fxSaved" style="font-size:10.5px;color:var(--green);margin-top:4px;display:none">✅ U ruajt në server — do të mbetet edhe pas rindezjes</div>
       <div style="font-size:10px;color:var(--dim);line-height:1.5;margin:6px 0 4px">
         Kur Rreziku Fiks është ON, ×1–×5 <b>NUK ndikojnë</b> — çdo tregti hyn me shumën
-        fikse dhe SL-i e mban humbjen nën kufirin. (Në Real Mode, minimumi i Binance ~$5.)
+        tënde dhe SL-i e mban humbjen nën kufirin. (Në Real Mode, minimumi i Binance ~$5.)
       </div>
       <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
         <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
@@ -1411,11 +1414,15 @@ async function saveFixedRisk(){
   const en=parseFloat($("fxEntry").value)||3;
   const ml=parseFloat($("fxLoss").value)||1;
   if(en<1||ml<0.25){ toast("Hyrja ≥$1 · Humbja max ≥$0.25"); return; }
+  const b=$("btnFxSave"); b.disabled=true; b.textContent="⏳ Duke ruajtur…";
   try{
-    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_entry_usd:en, fixed_max_loss_usd:ml})});
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_entry_usd:en, fixed_max_loss_usd:ml, fixed_risk_enabled:true})});
     S.status.fixed_risk=d.fixed_risk; renderStatus();
-    toast(`💵 Hyrja $${en} · humbje max $${ml}`);
-  }catch(e){ toast("Gabim"); }
+    const s=$("fxSaved"); s.style.display="block";
+    setTimeout(()=>{ s.style.display="none"; }, 4000);
+    toast(`💾 U ruajt në server: hyrje $${en} · humbje max $${ml}`);
+  }catch(e){ toast("Gabim — provo sërish"); }
+  b.disabled=false; b.textContent="💾 Ruaj në server";
 }
 async function toggleLock(){
   const sw=$("swLock"); sw.classList.toggle("on");

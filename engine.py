@@ -64,6 +64,19 @@ def clamp(v, lo, hi):
 
 
 def _load_settings():
+    """Load settings: SQLite first (most durable), then JSON fallback."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        try:
+            row = db.execute("SELECT value FROM settings WHERE key='cfg'").fetchone()
+            if row:
+                return json.loads(row[0])
+        except Exception:
+            pass
+        finally:
+            db.close()
+    except Exception:
+        pass
     try:
         with open(SETTINGS_PATH) as f:
             return json.load(f)
@@ -72,9 +85,22 @@ def _load_settings():
 
 
 def _save_settings(s):
-    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-    with open(SETTINGS_PATH, "w") as f:
-        json.dump(s, f, indent=2)
+    """Save settings to SQLite (durable on Render) AND JSON (fallback)."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
+        db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('cfg',?)",
+                   (json.dumps(s),))
+        db.commit()
+        db.close()
+    except Exception:
+        pass
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(s, f, indent=2)
+    except Exception:
+        pass
 
 
 class PaperEngine:
