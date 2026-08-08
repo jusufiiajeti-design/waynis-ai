@@ -2411,7 +2411,9 @@ class ConsensusAgent(Agent):
                     score = max(score - 0.05, -1.0)
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
-            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
+            # grid-style consensus: 1 strong strategy (≥65%) OR 2+ weaker
+            strong = [v for v in votes if v[1] == direction and v[2] >= 65]
+            if len(supporting) < 2 and len(strong) < 1:
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
@@ -2625,8 +2627,16 @@ class ValidatorAgent(Agent):
         if klines and len(klines) >= 2:
             closes = [c["c"] for c in klines]
             r = rsi(closes)
-            if r > 85 or r < 15:
-                self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
+            # RSI ekstrem bllokon vetëm në drejtimin e rrezikshëm:
+            # LONG me RSI shumë të lartë (po përfundon rritja)
+            # SHORT me RSI shumë të ulët (po përfundon rënia)
+            if best["direction"] == "LONG" and r > 88:
+                self.report(f"{best['symbol']}: RSI {r:.0f} — LONG i rrezikshëm",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            if best["direction"] == "SHORT" and r < 12:
+                self.report(f"{best['symbol']}: RSI {r:.0f} — SHORT i rrezikshëm",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
