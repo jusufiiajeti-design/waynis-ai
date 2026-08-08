@@ -804,8 +804,17 @@ function toast(msg,ms=3200){ const t=$("toast"); t.textContent=msg; t.classList.
 /* ================= data fetching ================= */
 async function jf(url,opts){ const r = await fetch(url,opts); if(!r.ok) throw new Error(url+" "+r.status); return r.json(); }
 async function refreshStatus(){
-  try{ S.status = await jf("/api/status"); renderStatus(); }
+  try{ S.status = await jf("/api/status"); renderStatus(); pulseLive(); }
   catch(e){ /* offline */ }
+}
+// pulse: ndez treguesin LIVE sa herë që vijnë të dhëna — provë se faqja s'është e ngrirë
+let pulseT=0;
+function pulseLive(){
+  const dot=document.querySelector(".dot");
+  if(!dot) return;
+  dot.style.transform="scale(1.6)";
+  clearTimeout(pulseT);
+  pulseT=setTimeout(()=>{ dot.style.transform="scale(1)"; }, 250);
 }
 async function refreshTickers(){
   try{ const d = await jf("/api/tickers"); S.tickers = d.tickers; renderTickers(); }
@@ -1648,9 +1657,11 @@ function animLoop(ts){
 requestAnimationFrame(animLoop);
 wsConnect();
 
-// PWA service worker (optional, best-effort)
+// PWA service worker — v2: network-first, pastron cache të vjetër
 if("serviceWorker" in navigator && location.protocol.startsWith("https")){
-  navigator.serviceWorker.register("/sw.js").catch(()=>{});
+  navigator.serviceWorker.register("/sw.js").then(reg=>{
+    reg.update().catch(()=>{});
+  }).catch(()=>{});
 }
 </script>
 </body>
