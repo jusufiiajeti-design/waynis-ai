@@ -668,7 +668,8 @@
 /* ================= state ================= */
 const S = {
   status:null, tickers:[], candles:[], trades:[], events:[],
-  symbol:"BTC-USDT", interval:"1m", tab:"home", lastCycleMsg:""
+  symbol:"BTC-USDT", interval:"1m", tab:"home", lastCycleMsg:"",
+  livePrice:null, lastPrice:null, priceFlash:0
 };
 const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT","NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","INJ-USDT","LTC-USDT","TRX-USDT","UNI-USDT"];
 const TFS = ["1m","5m","15m","1h","4h","1d"];
@@ -720,8 +721,14 @@ async function refreshTickers(){
   catch(e){}
 }
 async function refreshKlines(){
-  try{ const d = await jf(`/api/klines?symbol=${S.symbol}&interval=${S.interval}&limit=160`); S.candles=d.candles; drawChart(); }
-  catch(e){}
+  try{
+    const d = await jf(`/api/klines?symbol=${S.symbol}&interval=${S.interval}&limit=160`);
+    S.candles=d.candles;
+    // capture the live price from tickers if we have it
+    const tk = S.tickers.find(t=>t.symbol===S.symbol);
+    if(tk) S.livePrice = tk.price;
+    drawChart();
+  }catch(e){}
 }
 async function refreshTrades(){
   try{ const d = await jf("/api/trades?limit=60"); S.trades=d.trades; renderTrades(); }
@@ -931,16 +938,29 @@ function drawChart(){
     ctx.fillStyle = c.c>=c.o ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)";
     ctx.fillRect(x, H-padB-h+8, bw, h);
   });
-  // candles
+  // candles (last one animated — it "breathes" with the live price)
   C.forEach((c,i)=>{
     const x=xs(i);
+    const isLast = i===C.length-1;
     const up=c.c>=c.o;
     ctx.strokeStyle=up?"#22c55e":"#ef4444";
     ctx.fillStyle=up?"#22c55e":"#ef4444";
     ctx.beginPath(); ctx.moveTo(x, ys(c.h)); ctx.lineTo(x, ys(c.l)); ctx.stroke();
-    const yO=ys(c.o), yC=ys(c.c);
+    let yO=ys(c.o), yC=ys(c.c);
+    if(isLast && S.livePrice){
+      // interpolate the forming candle toward the latest live price
+      const liveY = ys(S.livePrice);
+      yC = yC + (liveY - yC) * 0.35;
+    }
     const y=Math.min(yO,yC), hh=Math.max(1.5,Math.abs(yO-yC));
     ctx.fillRect(x-bw/2, y, bw, hh);
+    if(isLast){
+      // glowing outline on the live candle
+      ctx.strokeStyle=up?"rgba(34,197,94,.7)":"rgba(239,68,68,.7)";
+      ctx.lineWidth=1.5;
+      ctx.strokeRect(x-bw/2-1, y-1, bw+2, hh+2);
+      ctx.lineWidth=1;
+    }
   });
   // EMA9 / EMA21
   const ema=(vals,p)=>{ const k=2/(p+1); const out=[vals[0]]; for(let i=1;i<vals.length;i++) out.push(vals[i]*k+out[i-1]*(1-k)); return out; };
@@ -1233,7 +1253,11 @@ function wsConnect(){
       try{
         const m=JSON.parse(e.data);
         if(m.type==="tick"){
-          if(m.tickers&&m.tickers.length){ S.tickers=m.tickers; renderTickers(); }
+          if(m.tickers&&m.tickers.length){
+            S.tickers=m.tickers; renderTickers();
+            const tk = m.tickers.find(t=>t.symbol===S.symbol);
+            if(tk){ S.livePrice = tk.price; }
+          }
           if(m.account&&m.stats){ S.status={...S.status,account:m.account,stats:m.stats,pipeline:m.pipeline}; renderStatus(); }
         }
       }catch(err){}
@@ -1404,8 +1428,23 @@ setInterval(refreshEvents, 5000);
 setInterval(refreshTrades, 8000);
 setInterval(refreshTickers, 10000);
 setInterval(()=>{ if(!document.hidden && S.tab==="trades"){ refreshEquity(); refreshLearning(); } }, 15000);
-setInterval(()=>{ if(document.hidden===false && S.tab==="home") refreshKlines(); }, 20000);
+setInterval(()=>{ if(document.hidden===false && S.tab==="home") refreshKlines(); }, 2500);
 window.addEventListener("resize", drawChart);
+
+/* ================= live animation loop ================= */
+// Redraw the chart ~30x/sec so the last candle visibly "breathes"
+// toward the live price — the market feels fast and alive.
+let lastAnim=0;
+function animLoop(ts){
+  if(S.tab==="home" && S.candles.length && S.livePrice){
+    if(ts - lastAnim > 33){           // ~30 fps
+      lastAnim = ts;
+      drawChart();
+    }
+  }
+  requestAnimationFrame(animLoop);
+}
+requestAnimationFrame(animLoop);
 wsConnect();
 
 // PWA service worker (optional, best-effort)
