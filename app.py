@@ -2229,17 +2229,13 @@ class ScannerAgent(Agent):
         e.last_tickers = tickers
 
         syms = [w[0] for w in WATCHLIST]
-        open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
-        # scan ALL watchlist symbols each cycle (faster, more opportunities)
+        # scan ALL symbols INCLUDING open positions — the tracker needs
+        # fresh candles on open positions to decide smart exits.
         batch = syms[:]
 
         scanned = []
         for sym in batch:
-            if sym in open_syms:
-                continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 300:
-                continue
             # use cache when fresh — skips the network call → much faster cycles
             klines = e.get_klines_cached(sym, "1m", 60, ttl=4.0)
             if klines is None:
@@ -2363,9 +2359,12 @@ class ConsensusAgent(Agent):
         weights = e.strategy_stats
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
         rms = self._relative_strength(ctx)                # "arbitrage" across symbols
+        open_syms = {p["symbol"] for p in e.open_positions()}
         candidates = []
 
         for sym, votes in ctx.votes.items():
+            if sym in open_syms:                # s'hapim pozicion të dytë
+                continue
             net = 0.0
             tw = 0.0
             for sname, d, conf in votes:
@@ -2842,30 +2841,12 @@ class TrackerAgent(Agent):
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
 
-            # ⏱️ TIME-STOP — free the slot: if the position has been open
-            # longer than MAX_HOLD_MIN and hasn't hit TP, close it with a
-            # small loss (or at breakeven if already in profit).
-            try:
-                opened_ts = time.mktime(time.strptime(
-                    pos["opened_at"][:19], "%Y-%m-%dT%H:%M:%S"))
-                age_min = (time.time() - opened_ts) / 60
-            except Exception:
-                age_min = 0
-            if age_min >= MAX_HOLD_MIN:
-                pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
-                    if pos["side"] == "LONG" else \
-                    (pos["entry"] - price) / pos["entry"] * 100
-                if pnl_pct <= 0:
-                    # small time-stop loss (tiny, frees slot fast)
-                    ts_price = pos["entry"] * (1 - TIME_STOP_SL) \
-                        if pos["side"] == "LONG" else \
-                        pos["entry"] * (1 + TIME_STOP_SL)
-                    await e._close_trade(pos, ts_price, "time")
-                else:
-                    # in profit → lock breakeven, keep running a bit more
-                    e._update_sl(pos["id"],
-                                 pos["entry"] * 1.0002 if pos["side"] == "LONG"
-                                 else pos["entry"] * 0.9998)
+            # 🧠 SMART EXIT — mbyll me fitim kur agjentët e shohin të
+            # arsyeshme (trend i mbaruar, RSI ekstrem, momentum i dobësuar).
+            # Nuk ka afat kohor — vendimi bazohet në tregun real.
+            exit_reason = self._smart_exit(e, pos, price, ctx)
+            if exit_reason:
+                await e._close_trade(pos, price, exit_reason)
                 continue
 
             if e.mode == "real":
@@ -2907,6 +2888,43 @@ class TrackerAgent(Agent):
                         p["symbol"], p["side"])
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
+
+    def _smart_exit(self, e, pos, price, ctx):
+        """Agjentët vendosin nëse fitimi është i arsyeshëm për t'u kapur
+        TANI — bazuar në treguesit e gjallë, jo në kohë."""
+        side = pos["side"]
+        # duhet të ketë fitim real për t'u mbrojtur (≥0.10%)
+        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
+            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
+        if pnl_pct < 0.10:
+            return None
+        klines = ctx.candles.get(pos["symbol"])
+        if not klines or len(klines) < 30:
+            return None
+        closes = [c["c"] for c in klines]
+        r = rsi(closes)
+        e9 = ema(closes, 9)[-1]
+        e21 = ema(closes, 21)[-1]
+        mom = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0
+        # dy qirinj të njëpasnjëshëm kundër drejtimit = lëvizja po mbaron
+        last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
+            if len(closes) >= 3 else 0
+
+        if side == "LONG":
+            if r > 70:
+                return "smart: RSI i mbingarkuar — fitim i kapur"
+            if e9 < e21:
+                return "smart: trendi u kthye poshtë — fitim i kapur"
+            if last2 < 0 and mom < 0:
+                return "smart: momentum i dobësuar — fitim i kapur"
+        else:
+            if r < 30:
+                return "smart: RSI i mbishitur — fitim i kapur"
+            if e9 > e21:
+                return "smart: trendi u kthye lart — fitim i kapur"
+            if last2 > 0 and mom > 0:
+                return "smart: momentum i dobësuar — fitim i kapur"
+        return None
 
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
