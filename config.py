@@ -41,7 +41,8 @@ RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Default ON me $3/$1 — kështu mbetet edhe pas rindezjes së serverit.
+# Default ON me $3/$1 — i sigurt. Përdoruesi i ndryshon nga Cilësimet
+# sa herë të dojë (JO e detyruar).
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
 FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
 FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti

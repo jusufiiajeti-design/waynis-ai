@@ -42,7 +42,8 @@ RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Default ON me $3/$1 — kështu mbetet edhe pas rindezjes së serverit.
+# Default ON me $3/$1 — i sigurt. Përdoruesi i ndryshon nga Cilësimet
+# sa herë të dojë (JO e detyruar).
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
 FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
 FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
@@ -3016,6 +3017,10 @@ class TrackerAgent(Agent):
                 await e._close_trade(pos, price, exit_reason)
                 continue
 
+            # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
+            if e.mode == "paper":
+                self._trail_profit(e, pos, price)
+
             if e.mode == "real":
                 await self._track_real(e, pos, price)
                 continue
@@ -3057,10 +3062,12 @@ class TrackerAgent(Agent):
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
 
     def _smart_exit(self, e, pos, price, ctx):
-        """Agjentët vendosin nëse fitimi është i arsyeshëm për t'u kapur
-        TANI — bazuar në treguesit e gjallë, jo në kohë."""
+        """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
+        • +0.30% e arsyeshme → kapet gjithmonë (pa pritur TP të largët)
+        • +0.15% me momentum të dobësuar → kapet herët
+        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet
+        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit."""
         side = pos["side"]
-        # duhet të ketë fitim real për t'u mbrojtur (≥0.05% — kap më shpejt)
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         if pnl_pct < 0.05:
@@ -3073,25 +3080,50 @@ class TrackerAgent(Agent):
         e9 = ema(closes, 9)[-1]
         e21 = ema(closes, 21)[-1]
         mom = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0
-        # dy qirinj të njëpasnjëshëm kundër drejtimit = lëvizja po mbaron
         last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
             if len(closes) >= 3 else 0
 
         if side == "LONG":
-            if r > 70:
+            # fitim i arsyeshëm i siguruar → kapje e garantuar
+            if pnl_pct >= 0.30:
+                return f"smart: +{pnl_pct:.2f}% e arsyeshme — fitim i kapur"
+            if pnl_pct >= 0.15 and last2 < 0:
+                return f"smart: +{pnl_pct:.2f}% me momentum të dobësuar — kapur"
+            if r > 68:
                 return "smart: RSI i mbingarkuar — fitim i kapur"
             if e9 < e21:
                 return "smart: trendi u kthye poshtë — fitim i kapur"
             if last2 < 0 and mom < 0:
                 return "smart: momentum i dobësuar — fitim i kapur"
         else:
-            if r < 30:
+            if pnl_pct >= 0.30:
+                return f"smart: +{pnl_pct:.2f}% e arsyeshme — fitim i kapur"
+            if pnl_pct >= 0.15 and last2 > 0:
+                return f"smart: +{pnl_pct:.2f}% me momentum të dobësuar — kapur"
+            if r < 32:
                 return "smart: RSI i mbishitur — fitim i kapur"
             if e9 > e21:
                 return "smart: trendi u kthye lart — fitim i kapur"
             if last2 > 0 and mom > 0:
                 return "smart: momentum i dobësuar — fitim i kapur"
         return None
+
+    def _trail_profit(self, e, pos, price):
+        """Trailing: pasi fitimi është +0.15%, SL lëviz poshtë çmimit për
+        ta kyçur — fitimi i arsyeshëm mbrohet edhe pa mbyllje të plotë."""
+        side = pos["side"]
+        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
+            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
+        if pnl_pct < 0.15:
+            return
+        if side == "LONG":
+            new_sl = price * 0.9995          # SL 0.05% poshtë çmimit
+            if new_sl > pos["sl"]:
+                e._update_sl(pos["id"], new_sl)
+        else:
+            new_sl = price * 1.0005          # SL 0.05% lart çmimit
+            if new_sl < pos["sl"]:
+                e._update_sl(pos["id"], new_sl)
 
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
