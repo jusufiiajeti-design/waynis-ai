@@ -97,6 +97,16 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
+## 💵 Fitimi kapet vetëm në dollarë të plotë
+
+- **Korniza: 5 minuta** (e fiksuar — nuk ndryshohet).
+- **Hyrja: $15** për tregti, **humbja maksimale: $2**.
+- Agjenti **mban pozicionin derisa fitimi të arrijë $1** — asnjëherë nuk kapet
+  fitim nën $1 dhe **asnjëherë me centa** (p.sh. JO $1.04).
+- Fitimi matet **neto (pas tarifave)** dhe kapet në **shkallët $1 → $2 → $3 →
+  $4 → $5**: kur tregu arrin shkallën, ajo kyçet si dollar i plotë.
+- Edhe TP (35%, rrjet sigurie) dhe historiku demo përdorin dollarë të plotë.
+
 ---
 
 ## 🚀 Si ta hapësh në Android
