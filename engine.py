@@ -258,10 +258,10 @@ class PaperEngine:
             notional = 1200 + random.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = notional * 0.0026 * (0.8 + random.random() * 0.5)
+                pnl = round(notional * 0.0026 * (0.8 + random.random() * 0.5))
                 status = "win"
             else:
-                pnl = -notional * 0.0055 * (0.8 + random.random() * 0.4)
+                pnl = -round(notional * 0.0055 * (0.8 + random.random() * 0.4))
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
             opened = base + i * 5700 + random.random() * 2000
