@@ -2517,6 +2517,7 @@ class ConsensusAgent(Agent):
                 "supporting": supporting,
                 "n_votes": len(votes),
                 "rms_note": rms_note,
+                "entry": (ctx.tickers.get(sym) or {}).get("price") or 0,
             })
 
         if not candidates:
@@ -2949,9 +2950,10 @@ class FillerAgent(Agent):
         # 🔀 GRID: open both directions (LONG + SHORT) if slots allow
         opened = 0
         for pick in getattr(ctx, "picks", [sig]):
-            # respect fixed-risk sizing for each pick
-            pp = pick.get("entry") or entry \
-                or (ctx.tickers.get(pick["symbol"]) or {}).get("price") or 0
+            # ⚠️ E RËNDËSISHME: çmimi VETËM i simbolit të vet — kurrë
+            # fallback nga pick-i tjetër (kjo shkaktoi çmime të përziera!)
+            pp = pick.get("entry") or \
+                (ctx.tickers.get(pick["symbol"]) or {}).get("price") or 0
             if not pp or pp <= 0:
                 continue
             psl = pick.get("sl")
