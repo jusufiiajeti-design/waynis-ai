@@ -187,3 +187,4 @@ Ky është **demo edukative** me tregti të simuluara (paper). Çmimet janë rea
 por asnjë para nuk investohet apo rrezikohet. Tregtimi i kriptomonedhave në
 tregjet reale mbart rrezik të lartë — mos investo para që s'mund t'i humbësh.
 Historiku i tregtive në fillim është **seed demo** (mund të fshihet me Reset).
+
