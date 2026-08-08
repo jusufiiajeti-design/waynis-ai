@@ -532,9 +532,19 @@ class ValidatorAgent(Agent):
             return
 
         # 🎯 multi-timeframe confirmation (15m trend must agree)
+        # — but in paper mode, SHORT against an up-trend is allowed (grid
+        #   style) when the balance favours it; it just gets lower conf.
         if MTF_ENABLED:
             ok, m = await self._mtf(e, best["symbol"], best["direction"])
             if not ok:
+                if e.mode == "paper" and best["direction"] == "SHORT":
+                    # grid SHORT: allowed, but reduce confidence
+                    best["confidence"] = max(50, best["confidence"] - 15)
+                    self.report(
+                        f"{best['symbol']}: SHORT kundër trendit (grid) "
+                        f"— konfidenca u ul në {best['confidence']:.0f}%",
+                        best["symbol"], best["direction"], best["confidence"])
+                    return
                 self.report(f"{best['symbol']}: MTF {m}",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
