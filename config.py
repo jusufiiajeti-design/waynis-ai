@@ -2,13 +2,14 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
-SCAN_BATCH = 20                 # symbols scanned per cycle (all watchlist)
+SCAN_BATCH = 30                 # symbols scanned per cycle (all watchlist)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.0045            # +0.45 %
+TAKE_PROFIT = 0.0035            # +0.35 % (më afër → kapet më shpejt, më shumë fitore)
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 8                    # max concurrent open positions (was 4 — more slots = more trades)
+MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
+COOLDOWN_SEC = 45               # cooldown per symbol after a close (was 300s → much faster re-entry)
 MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
 TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 

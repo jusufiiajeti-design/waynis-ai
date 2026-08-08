@@ -3,13 +3,14 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
-SCAN_BATCH = 20                 # symbols scanned per cycle (all watchlist)
+SCAN_BATCH = 30                 # symbols scanned per cycle (all watchlist)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.0045            # +0.45 %
+TAKE_PROFIT = 0.0035            # +0.35 % (më afër → kapet më shpejt, më shumë fitore)
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 8                    # max concurrent open positions (was 4 — more slots = more trades)
+MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
+COOLDOWN_SEC = 45               # cooldown per symbol after a close (was 300s → much faster re-entry)
 MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
 TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 
@@ -116,6 +117,18 @@ WATCHLIST = [
     ("LTC-USDT", None, None),
     ("TRX-USDT", None, None),
     ("UNI-USDT", None, None),
+    ("TIA-USDT", None, None),
+    ("SEI-USDT", None, None),
+    ("WIF-USDT", None, None),
+    ("AAVE-USDT", None, None),
+    ("LDO-USDT", None, None),
+    ("FET-USDT", None, None),
+    ("RENDER-USDT", None, None),
+    ("HBAR-USDT", None, None),
+    ("ALGO-USDT", None, None),
+    ("ATOM-USDT", None, None),
+    ("ETC-USDT", None, None),
+    ("FIL-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
@@ -2365,6 +2378,8 @@ class ConsensusAgent(Agent):
         for sym, votes in ctx.votes.items():
             if sym in open_syms:                # s'hapim pozicion të dytë
                 continue
+            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
+                continue                        # cooldown 45s pas mbylljes
             net = 0.0
             tw = 0.0
             for sname, d, conf in votes:
@@ -2893,10 +2908,10 @@ class TrackerAgent(Agent):
         """Agjentët vendosin nëse fitimi është i arsyeshëm për t'u kapur
         TANI — bazuar në treguesit e gjallë, jo në kohë."""
         side = pos["side"]
-        # duhet të ketë fitim real për t'u mbrojtur (≥0.10%)
+        # duhet të ketë fitim real për t'u mbrojtur (≥0.05% — kap më shpejt)
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        if pnl_pct < 0.10:
+        if pnl_pct < 0.05:
             return None
         klines = ctx.candles.get(pos["symbol"])
         if not klines or len(klines) < 30:

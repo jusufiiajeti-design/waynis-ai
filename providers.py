@@ -37,6 +37,18 @@ WATCHLIST = [
     ("LTC-USDT", None, None),
     ("TRX-USDT", None, None),
     ("UNI-USDT", None, None),
+    ("TIA-USDT", None, None),
+    ("SEI-USDT", None, None),
+    ("WIF-USDT", None, None),
+    ("AAVE-USDT", None, None),
+    ("LDO-USDT", None, None),
+    ("FET-USDT", None, None),
+    ("RENDER-USDT", None, None),
+    ("HBAR-USDT", None, None),
+    ("ALGO-USDT", None, None),
+    ("ATOM-USDT", None, None),
+    ("ETC-USDT", None, None),
+    ("FIL-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}

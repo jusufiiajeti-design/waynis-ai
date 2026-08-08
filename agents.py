@@ -37,7 +37,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -259,6 +259,8 @@ class ConsensusAgent(Agent):
         for sym, votes in ctx.votes.items():
             if sym in open_syms:                # s'hapim pozicion të dytë
                 continue
+            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
+                continue                        # cooldown 45s pas mbylljes
             net = 0.0
             tw = 0.0
             for sname, d, conf in votes:
@@ -787,10 +789,10 @@ class TrackerAgent(Agent):
         """Agjentët vendosin nëse fitimi është i arsyeshëm për t'u kapur
         TANI — bazuar në treguesit e gjallë, jo në kohë."""
         side = pos["side"]
-        # duhet të ketë fitim real për t'u mbrojtur (≥0.10%)
+        # duhet të ketë fitim real për t'u mbrojtur (≥0.05% — kap më shpejt)
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        if pnl_pct < 0.10:
+        if pnl_pct < 0.05:
             return None
         klines = ctx.candles.get(pos["symbol"])
         if not klines or len(klines) < 30:
