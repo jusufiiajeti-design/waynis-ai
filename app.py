@@ -42,11 +42,14 @@ RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Default ON me $3/$1 — i sigurt. Përdoruesi i ndryshon nga Cilësimet
-# sa herë të dojë (JO e detyruar).
+# Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
+# nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
-FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
+FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
+FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
+
+# ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
+PROFIT_LADDER = [3.0, 2.0, 1.0, 0.5]   # fitime $0.5, $1, $2, $3+ të arsyeshme
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
@@ -3065,15 +3068,22 @@ class TrackerAgent(Agent):
 
     def _smart_exit(self, e, pos, price, ctx):
         """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
-        • +0.30% e arsyeshme → kapet gjithmonë (pa pritur TP të largët)
-        • +0.15% me momentum të dobësuar → kapet herët
+        • Shkalla në $: +$0.5, +$1, +$2, +$3 → kapet sa t'ia arrijë
+        • +0.30% e arsyeshme → kapet gjithmonë
         • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet
         Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit."""
         side = pos["side"]
+        qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         if pnl_pct < 0.05:
             return None
+        # 💵 dollar ladder — fitimi në $ është kriteri kryesor
+        pnl_usd = pos["entry"] * qty * pnl_pct / 100
+        for rung in (3.0, 2.0, 1.0, 0.5):
+            if pnl_usd >= rung:
+                return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
+                        f"(shkalla ${rung:g}) — kapur")
         klines = ctx.candles.get(pos["symbol"])
         if not klines or len(klines) < 30:
             return None
@@ -3086,7 +3096,6 @@ class TrackerAgent(Agent):
             if len(closes) >= 3 else 0
 
         if side == "LONG":
-            # fitim i arsyeshëm i siguruar → kapje e garantuar
             if pnl_pct >= 0.30:
                 return f"smart: +{pnl_pct:.2f}% e arsyeshme — fitim i kapur"
             if pnl_pct >= 0.15 and last2 < 0:
@@ -3111,19 +3120,27 @@ class TrackerAgent(Agent):
         return None
 
     def _trail_profit(self, e, pos, price):
-        """Trailing: pasi fitimi është +0.15%, SL lëviz poshtë çmimit për
-        ta kyçur — fitimi i arsyeshëm mbrohet edhe pa mbyllje të plotë."""
+        """Trailing + shkalla në $: SL lëviz për të kyçur $0.5/$1/$2/$3
+        sapo arrihen — fitimi i arsyeshëm mbrohet gjithmonë."""
         side = pos["side"]
+        qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        if pnl_pct < 0.15:
+        pnl_usd = pos["entry"] * qty * pnl_pct / 100
+        if pnl_usd < 0.5:
             return
+        # SL që kyç shkallën më të lartë të arritur
+        locked = 0.0
+        for rung in (3.0, 2.0, 1.0, 0.5):
+            if pnl_usd >= rung:
+                locked = rung
+                break
         if side == "LONG":
-            new_sl = price * 0.9995          # SL 0.05% poshtë çmimit
+            new_sl = pos["entry"] + locked / qty
             if new_sl > pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
         else:
-            new_sl = price * 1.0005          # SL 0.05% lart çmimit
+            new_sl = pos["entry"] - locked / qty
             if new_sl < pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
 

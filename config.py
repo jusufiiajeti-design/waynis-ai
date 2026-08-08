@@ -41,11 +41,14 @@ RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Default ON me $3/$1 — i sigurt. Përdoruesi i ndryshon nga Cilësimet
-# sa herë të dojë (JO e detyruar).
+# Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
+# nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
-FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
+FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
+FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
+
+# ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
+PROFIT_LADDER = [3.0, 2.0, 1.0, 0.5]   # fitime $0.5, $1, $2, $3+ të arsyeshme
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
