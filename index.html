@@ -467,6 +467,22 @@
           </select>
         </div>
       </div>
+      <div class="set" style="border-top:1px dashed rgba(56,189,248,.4);margin-top:6px">
+        <div><div class="l">💵 Rrezik Fiks në $</div><div class="d">Hyrje fikse <b id="fxEntryLbl">$3</b> për tregti · humbje max <b id="fxLossLbl">$1</b> — <b>pavarësisht ×1–×5</b></div></div>
+        <div class="switch" id="swFx" onclick="toggleFixedRisk()"></div>
+      </div>
+      <div class="set" style="margin-top:2px">
+        <div><div class="l">Hyrja për tregti</div><div class="d">$ USDT çdo herë</div></div>
+        <input type="number" id="fxEntry" min="1" step="1" value="3" class="inp" style="width:64px" onchange="saveFixedRisk()">
+      </div>
+      <div class="set">
+        <div><div class="l">Humbja maksimale</div><div class="d">$ USDT — asnjëherë më shumë se kjo</div></div>
+        <input type="number" id="fxLoss" min="0.25" step="0.25" value="1" class="inp" style="width:64px" onchange="saveFixedRisk()">
+      </div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.5;margin:6px 0 4px">
+        Kur Rreziku Fiks është ON, ×1–×5 <b>NUK ndikojnë</b> — çdo tregti hyn me shumën
+        fikse dhe SL-i e mban humbjen nën kufirin. (Në Real Mode, minimumi i Binance ~$5.)
+      </div>
       <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
         <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
         <div class="switch on" id="swLock" onclick="toggleLock()"></div>
@@ -785,6 +801,13 @@ function renderStatus(){
   sw.classList.toggle("on", !!S.status.compound);
   $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
   const cm=$("cmSel"); if(cm) cm.value = String(S.status.compound_mult||1);
+  // 💵 fixed dollar risk
+  const fx=S.status.fixed_risk||{};
+  $("swFx").classList.toggle("on", !!fx.enabled);
+  $("fxEntryLbl").textContent = "$"+(fx.entry_usd||3);
+  $("fxLossLbl").textContent = "$"+(fx.max_loss_usd||1);
+  $("fxEntry").value = fx.entry_usd||3;
+  $("fxLoss").value = fx.max_loss_usd||1;
   const g=a.growth||1;
   const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
   // mode state (paper / real)
@@ -1373,6 +1396,25 @@ async function saveCompoundMult(){
     S.status.compound_mult=d.compound_mult;
     toast(d.compound_mult>=2?`💥 Komponimi ×${d.compound_mult} — fitime ×${d.compound_mult}, por Risk Manager-i mbron humbjet`:"Komponimi ×1 normal");
     refreshStatus();
+  }catch(e){ toast("Gabim"); }
+}
+async function toggleFixedRisk(){
+  const sw=$("swFx"); const on=!sw.classList.contains("on");
+  sw.classList.toggle("on", on);
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_risk_enabled:on})});
+    S.status.fixed_risk=d.fixed_risk; renderStatus();
+    toast(on?`💵 Rrezik fiks ON — hyrje $${d.fixed_risk.entry_usd}, humbje max $${d.fixed_risk.max_loss_usd} (pavarësisht ×N)`:"💵 Rrezik fiks OFF — kthehet te ×N");
+  }catch(e){ sw.classList.toggle("on", !on); }
+}
+async function saveFixedRisk(){
+  const en=parseFloat($("fxEntry").value)||3;
+  const ml=parseFloat($("fxLoss").value)||1;
+  if(en<1||ml<0.25){ toast("Hyrja ≥$1 · Humbja max ≥$0.25"); return; }
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_entry_usd:en, fixed_max_loss_usd:ml})});
+    S.status.fixed_risk=d.fixed_risk; renderStatus();
+    toast(`💵 Hyrja $${en} · humbje max $${ml}`);
   }catch(e){ toast("Gabim"); }
 }
 async function toggleLock(){

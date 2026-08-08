@@ -37,6 +37,11 @@ RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
 RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
+# ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
+FIXED_RISK_ENABLED = False       # off until user turns it on
+FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
+FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
+
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than

@@ -238,6 +238,7 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "risk": engine.risk_info(),
+        "fixed_risk": engine.fixed_risk_info(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
@@ -333,6 +334,13 @@ async def set_settings(body: dict):
     if "compound_mult" in body:
         mult = engine.set_compound_mult(body["compound_mult"])
         return {"ok": True, "compound_mult": mult}
+    if any(k in body for k in ("fixed_risk_enabled", "fixed_entry_usd",
+                               "fixed_max_loss_usd")):
+        info = engine.set_fixed_risk(
+            enabled=body.get("fixed_risk_enabled"),
+            entry=body.get("fixed_entry_usd"),
+            max_loss=body.get("fixed_max_loss_usd"))
+        return {"ok": True, "fixed_risk": info}
     if "equity_lock_enabled" in body or "equity_lock_pct" in body:
         info = engine.set_equity_lock(
             enabled=body.get("equity_lock_enabled"),

@@ -38,6 +38,11 @@ RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
 RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
+# ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
+FIXED_RISK_ENABLED = False       # off until user turns it on
+FIXED_ENTRY_USD = 3.0            # hyrja për tregti në USDT (pavarësisht ×N)
+FIXED_MAX_LOSS_USD = 1.0         # asnjëherë më shumë se kjo humbje për tregti
+
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
@@ -1955,7 +1960,36 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
+        # stop distance depends on direction (SHORT SL is ABOVE entry)
+        sl = sig.get("sl")
+        if sl is None:
+            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
+                else entry * (1 + STOP_LOSS)
+        stop_dist = abs(entry - sl)
+        sl_pct = stop_dist / entry if entry else STOP_LOSS
+
         mult = e.effective_mult()                  # ×N normal, ×1 kur risk aktiv
+
+        # 💵 FIXED DOLLAR RISK — entry fixed (e.g. $3), loss never above max
+        # (e.g. $1), regardless of ×1..×5.
+        if e.fixed_risk_enabled:
+            notional = e.fixed_entry_usd
+            if e.mode == "real" and notional < REAL_MIN_NOTIONAL:
+                notional = REAL_MIN_NOTIONAL      # Binance min ~$5
+            qty_entry = notional / entry if entry else 0
+            # safety: qty limited so SL loss never exceeds the cap
+            qty_cap = (e.fixed_max_loss_usd / (entry * sl_pct)) \
+                if (entry and sl_pct > 0) else 0
+            qty = min(qty_entry, qty_cap) if qty_cap > 0 else qty_entry
+            loss_if_sl = qty * entry * sl_pct if entry else 0
+            ctx.qty = qty
+            self.report(
+                f"💵 Fikse: ${notional:.2f} hyrje (pavarësisht ×{mult}) · "
+                f"SL {sl_pct*100:.2f}% → humbje max ${loss_if_sl:.2f} "
+                f"(kufiri ${e.fixed_max_loss_usd:.2f})",
+                sig["symbol"], sig["direction"], sig["confidence"])
+            return
+
         if e.mode == "real":
             bal = e.real_balance()
             notional = bal * min(REAL_MAX_NOTIONAL_PCT * mult, 0.40)
@@ -1968,12 +2002,6 @@ class SizerAgent(Agent):
         equity = e.account()["equity"]
         base = equity if e.compound else STARTING_BALANCE
         mode = "KOMPONIM" if e.compound else "FIKS"
-        # stop distance depends on direction (SHORT SL is ABOVE entry)
-        sl = sig.get("sl")
-        if sl is None:
-            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
-                else entry * (1 + STOP_LOSS)
-        stop_dist = abs(entry - sl)
         risk_amount = base * TRADE_RISK * mult
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
         # clear progression: ×1=35% ×2=50% ×3=60% ×4=70% ×5=80%
@@ -2279,6 +2307,12 @@ class PaperEngine:
         self.risk_state = {"mode": "normal", "mult": self.compound_mult,
                            "pause_until": 0.0, "last_check": 0.0,
                            "wr": None, "net": None}
+        # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
+        self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
+                                               FIXED_RISK_ENABLED)
+        self.fixed_entry_usd = settings.get("fixed_entry_usd", FIXED_ENTRY_USD)
+        self.fixed_max_loss_usd = settings.get("fixed_max_loss_usd",
+                                               FIXED_MAX_LOSS_USD)
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -2471,6 +2505,29 @@ class PaperEngine:
             "wr": s.get("wr"),
             "net": s.get("net"),
         }
+
+    def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
+        if enabled is not None:
+            self.fixed_risk_enabled = bool(enabled)
+        if entry is not None:
+            self.fixed_entry_usd = max(1.0, float(entry))
+        if max_loss is not None:
+            self.fixed_max_loss_usd = max(0.25, float(max_loss))
+        s = _load_settings()
+        s.update({"fixed_risk_enabled": self.fixed_risk_enabled,
+                  "fixed_entry_usd": self.fixed_entry_usd,
+                  "fixed_max_loss_usd": self.fixed_max_loss_usd})
+        _save_settings(s)
+        self._event("settings",
+                    f"💵 Rrezik fiks: {'ON' if self.fixed_risk_enabled else 'OFF'} — "
+                    f"hyrje ${self.fixed_entry_usd:.2f}, humbje max "
+                    f"${self.fixed_max_loss_usd:.2f} (pavarësisht ×N)")
+        return self.fixed_risk_info()
+
+    def fixed_risk_info(self):
+        return {"enabled": self.fixed_risk_enabled,
+                "entry_usd": self.fixed_entry_usd,
+                "max_loss_usd": self.fixed_max_loss_usd}
 
     def recent_closed(self, n=RISK_LOOKBACK):
         with self._conn() as c:
@@ -3434,6 +3491,7 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "risk": engine.risk_info(),
+        "fixed_risk": engine.fixed_risk_info(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
@@ -3529,6 +3587,13 @@ async def set_settings(body: dict):
     if "compound_mult" in body:
         mult = engine.set_compound_mult(body["compound_mult"])
         return {"ok": True, "compound_mult": mult}
+    if any(k in body for k in ("fixed_risk_enabled", "fixed_entry_usd",
+                               "fixed_max_loss_usd")):
+        info = engine.set_fixed_risk(
+            enabled=body.get("fixed_risk_enabled"),
+            entry=body.get("fixed_entry_usd"),
+            max_loss=body.get("fixed_max_loss_usd"))
+        return {"ok": True, "fixed_risk": info}
     if "equity_lock_enabled" in body or "equity_lock_pct" in body:
         info = engine.set_equity_lock(
             enabled=body.get("equity_lock_enabled"),

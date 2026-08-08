@@ -32,7 +32,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     COMPOUND_MULT_MAX,
                     RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
                     RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
-                    RISK_RESUME_MIN)
+                    RISK_RESUME_MIN,
+                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -100,6 +101,12 @@ class PaperEngine:
         self.risk_state = {"mode": "normal", "mult": self.compound_mult,
                            "pause_until": 0.0, "last_check": 0.0,
                            "wr": None, "net": None}
+        # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
+        self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
+                                               FIXED_RISK_ENABLED)
+        self.fixed_entry_usd = settings.get("fixed_entry_usd", FIXED_ENTRY_USD)
+        self.fixed_max_loss_usd = settings.get("fixed_max_loss_usd",
+                                               FIXED_MAX_LOSS_USD)
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -292,6 +299,29 @@ class PaperEngine:
             "wr": s.get("wr"),
             "net": s.get("net"),
         }
+
+    def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
+        if enabled is not None:
+            self.fixed_risk_enabled = bool(enabled)
+        if entry is not None:
+            self.fixed_entry_usd = max(1.0, float(entry))
+        if max_loss is not None:
+            self.fixed_max_loss_usd = max(0.25, float(max_loss))
+        s = _load_settings()
+        s.update({"fixed_risk_enabled": self.fixed_risk_enabled,
+                  "fixed_entry_usd": self.fixed_entry_usd,
+                  "fixed_max_loss_usd": self.fixed_max_loss_usd})
+        _save_settings(s)
+        self._event("settings",
+                    f"💵 Rrezik fiks: {'ON' if self.fixed_risk_enabled else 'OFF'} — "
+                    f"hyrje ${self.fixed_entry_usd:.2f}, humbje max "
+                    f"${self.fixed_max_loss_usd:.2f} (pavarësisht ×N)")
+        return self.fixed_risk_info()
+
+    def fixed_risk_info(self):
+        return {"enabled": self.fixed_risk_enabled,
+                "entry_usd": self.fixed_entry_usd,
+                "max_loss_usd": self.fixed_max_loss_usd}
 
     def recent_closed(self, n=RISK_LOOKBACK):
         with self._conn() as c:

@@ -550,7 +550,36 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
+        # stop distance depends on direction (SHORT SL is ABOVE entry)
+        sl = sig.get("sl")
+        if sl is None:
+            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
+                else entry * (1 + STOP_LOSS)
+        stop_dist = abs(entry - sl)
+        sl_pct = stop_dist / entry if entry else STOP_LOSS
+
         mult = e.effective_mult()                  # ×N normal, ×1 kur risk aktiv
+
+        # 💵 FIXED DOLLAR RISK — entry fixed (e.g. $3), loss never above max
+        # (e.g. $1), regardless of ×1..×5.
+        if e.fixed_risk_enabled:
+            notional = e.fixed_entry_usd
+            if e.mode == "real" and notional < REAL_MIN_NOTIONAL:
+                notional = REAL_MIN_NOTIONAL      # Binance min ~$5
+            qty_entry = notional / entry if entry else 0
+            # safety: qty limited so SL loss never exceeds the cap
+            qty_cap = (e.fixed_max_loss_usd / (entry * sl_pct)) \
+                if (entry and sl_pct > 0) else 0
+            qty = min(qty_entry, qty_cap) if qty_cap > 0 else qty_entry
+            loss_if_sl = qty * entry * sl_pct if entry else 0
+            ctx.qty = qty
+            self.report(
+                f"💵 Fikse: ${notional:.2f} hyrje (pavarësisht ×{mult}) · "
+                f"SL {sl_pct*100:.2f}% → humbje max ${loss_if_sl:.2f} "
+                f"(kufiri ${e.fixed_max_loss_usd:.2f})",
+                sig["symbol"], sig["direction"], sig["confidence"])
+            return
+
         if e.mode == "real":
             bal = e.real_balance()
             notional = bal * min(REAL_MAX_NOTIONAL_PCT * mult, 0.40)
@@ -563,12 +592,6 @@ class SizerAgent(Agent):
         equity = e.account()["equity"]
         base = equity if e.compound else STARTING_BALANCE
         mode = "KOMPONIM" if e.compound else "FIKS"
-        # stop distance depends on direction (SHORT SL is ABOVE entry)
-        sl = sig.get("sl")
-        if sl is None:
-            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
-                else entry * (1 + STOP_LOSS)
-        stop_dist = abs(entry - sl)
         risk_amount = base * TRADE_RISK * mult
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
         # clear progression: ×1=35% ×2=50% ×3=60% ×4=70% ×5=80%
