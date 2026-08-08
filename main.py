@@ -239,6 +239,7 @@ async def status():
         "lock": engine.lock_info(),
         "risk": engine.risk_info(),
         "fixed_risk": engine.fixed_risk_info(),
+        "learning_ctrl": engine.learning_controls(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
@@ -334,6 +335,10 @@ async def set_settings(body: dict):
     if "compound_mult" in body:
         mult = engine.set_compound_mult(body["compound_mult"])
         return {"ok": True, "compound_mult": mult}
+    if "threshold" in body or "learn_speed" in body:
+        info = engine.set_learning(threshold=body.get("threshold"),
+                                   speed=body.get("learn_speed"))
+        return {"ok": True, "learning_ctrl": info}
     if any(k in body for k in ("fixed_risk_enabled", "fixed_entry_usd",
                                "fixed_max_loss_usd")):
         info = engine.set_fixed_risk(

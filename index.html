@@ -372,6 +372,31 @@
         <div class="lstat"><div class="n" id="lSysWr">—</div><div class="l">win rate i sistemit</div></div>
         <div class="lstat"><div class="n up" id="lPrag">0.05</div><div class="l">pragu adaptiv</div></div>
       </div>
+      <div style="background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--mut);margin-bottom:8px"><b>Kontrolli i mësimit</b> — vendose si të duash, ruhet në server:</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:11px;color:var(--dim);width:110px">Pragu (guxim)</span>
+          <select id="thrSel" class="sel" style="flex:1" onchange="saveLearning()">
+            <option value="0.03">0.03 · shumë guximtar</option>
+            <option value="0.04">0.04 · guximtar</option>
+            <option value="0.05">0.05 · normal</option>
+            <option value="0.07">0.07 · i kujdesshëm</option>
+            <option value="0.10">0.10 · shumë i kujdesshëm</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;color:var(--dim);width:110px">Shpejtësia e mësimit</span>
+          <select id="spdSel" class="sel" style="flex:1" onchange="saveLearning()">
+            <option value="1">×1 · normal</option>
+            <option value="2">×2 · më shpejt</option>
+            <option value="3">×3 · shumë shpejt</option>
+          </select>
+        </div>
+        <div style="font-size:9.5px;color:var(--dim);line-height:1.5;margin-top:6px">
+          Pragu më i ulët = boti hyn më shpejt (më shumë tregti) · më i lartë = më i kujdesshëm.
+          Shpejtësia e mësimit = sa shpejt strategjitë konsiderohen "të trajnuara".
+        </div>
+      </div>
       <canvas id="learnChart" style="height:110px"></canvas>
       <div class="chart-foot"><span>Kurba e mësimit — pesha mesatare e strategjive</span><span id="learnGrowth">—</span></div>
       <div id="learnList" style="margin-top:10px"></div>
@@ -1197,6 +1222,10 @@ function renderLearning(){
   wrEl.className = "n "+(wr!=null&&wr>=50?"up":"dn");
   const th=$("lPrag"); th.textContent = (meta.threshold||0.05).toFixed(2);
   th.className = "n "+(meta.threshold<=0.05?"up":"dn");
+  // user learning controls
+  const lc = (S.status&&S.status.learning_ctrl)||{};
+  if($("thrSel")) $("thrSel").value = String(lc.threshold!=null?lc.threshold:0.05);
+  if($("spdSel")) $("spdSel").value = String(lc.speed||1);
   // strategy rows
   const names=Object.keys(sts).sort((a,b)=>(sts[b].weight||1)-(sts[a].weight||1));
   $("learnList").innerHTML = names.map(n=>{
@@ -1251,6 +1280,17 @@ function drawLearnChart(){
 const EMOJI={"EMA Trend":"📈","RSI Reversal":"🔄","MACD Momentum":"🌊","Bollinger Break":"🎈",
   "Stochastic":"⚡","Volume Spike":"🔊","ATR Channel":"📏","Donchian Break":"🚀",
   "ROC Momentum":"🏎️","Slow Trend":"🐢"};
+
+async function saveLearning(){
+  const t=parseFloat($("thrSel").value)||0.05;
+  const s=parseFloat($("spdSel").value)||1;
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({threshold:t, learn_speed:s})});
+    S.status.learning_ctrl=d.learning_ctrl;
+    toast(`🎓 Pragu ${t} · mësimi ×${s} — u ruajt në server`);
+    refreshStatus();
+  }catch(e){ toast("Gabim"); }
+}
 
 /* ================= render: feed ================= */
 function renderTickers(){

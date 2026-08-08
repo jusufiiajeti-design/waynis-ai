@@ -1108,7 +1108,7 @@ HISTORY_MAX = 240           # learning-curve points kept
 # ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
-def compute_weight(st):
+def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
     t = st["trades"]
     if t == 0:
         return 1.0
@@ -1123,15 +1123,15 @@ def compute_weight(st):
     w += max(-0.40, min(0.40, wr * 0.50))                 # win-rate edge
     w += max(-0.20, min(0.25, (pf - 1.0) * 0.15))         # profit-factor edge
     w += max(-0.25, min(0.30, rec / 40.0))                # recency
-    if t < EXPLORE_MIN_TRADES:                            # exploration bonus
-        w += (EXPLORE_MIN_TRADES - t) / EXPLORE_MIN_TRADES * 0.25
+    if t < explore_min:                                   # exploration bonus
+        w += (explore_min - t) / explore_min * 0.25
     return max(WEIGHT_MIN, min(WEIGHT_MAX, round(w, 3)))
 
 
 # ---------------------------------------------------------------------------
 # Aggregate per-strategy stats from the trades table
 # ---------------------------------------------------------------------------
-def aggregate_from_trades(conn, last_id=0):
+def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
     """Returns (stats dict keyed by strategy name, max trade id processed)."""
     rows = conn.execute(
         "SELECT id, votes, status, pnl FROM trades "
@@ -1161,7 +1161,7 @@ def aggregate_from_trades(conn, last_id=0):
             if len(st["recent"]) > RECENT_WINDOW:
                 st["recent"] = st["recent"][-RECENT_WINDOW:]
     for name, st in stats.items():
-        st["weight"] = compute_weight(st)
+        st["weight"] = compute_weight(st, explore_min)
         st["updated_at"] = time.time()
         # keep the dict clean for JSON
         st["recent"] = [round(x, 2) for x in st["recent"][-10:]]
@@ -1187,15 +1187,17 @@ def enrich(stats):
 # Meta-learning: adaptive consensus threshold from rolling system results
 # ---------------------------------------------------------------------------
 def meta_threshold(recent_results, base=BASE_THRESHOLD):
+    """base = user preference (default 0.05). The system nudges it:
+    winning → looser (0.8×), losing → stricter (1.6×), clamped 0.03..0.12."""
     if not recent_results:
-        return base
+        return round(base, 3)
     wins = sum(1 for r in recent_results if r > 0)
     wr = wins / len(recent_results)
     if wr >= 0.55:
         return round(max(0.03, base * 0.8), 3)      # exploit — looser
     if wr <= 0.42:
-        return round(min(0.10, base * 1.6), 3)      # conserve — stricter
-    return base
+        return round(min(0.12, base * 1.6), 3)      # conserve — stricter
+    return round(base, 3)
 
 
 def system_win_rate(recent_results):
@@ -2157,7 +2159,9 @@ class LearningAgent(Agent):
         e = self.engine
         try:
             with e._conn() as c:
-                fresh, max_id = aggregate_from_trades(c, e.learning_last_id)
+                explore_min = max(1, int(round(5 / getattr(e, "learn_speed", 1.0))))
+                fresh, max_id = aggregate_from_trades(
+                    c, e.learning_last_id, explore_min=explore_min)
             if max_id > e.learning_last_id:
                 e.learning_last_id = max_id
                 for name, st in fresh.items():
@@ -2176,7 +2180,8 @@ class LearningAgent(Agent):
                     "ORDER BY id DESC LIMIT ?", (META_WINDOW,)).fetchall()
             results = [r[0] or 0.0 for r in rows][::-1]
             meta["recent"] = results[-META_WINDOW:]
-            meta["threshold"] = meta_threshold(results)
+            meta["threshold"] = meta_threshold(
+                results, base=getattr(e, "user_threshold", 0.05))
             meta["system_win_rate"] = system_win_rate(results)
         except Exception:
             pass
@@ -2197,8 +2202,11 @@ class LearningAgent(Agent):
             e.learning_history = e.learning_history[-HISTORY_MAX:]
             save_history(e.learning_history)
 
+        # trained = strategies with enough trades (speed scales the bar)
+        speed = getattr(e, "learn_speed", 1.0)
+        trained_bar = max(1, int(round(5 / speed)))   # ×2 speed → 3 tregti
         trained = sum(1 for s in e.strategy_stats.values()
-                      if s.get("trades", 0) > 0)
+                      if s.get("trades", 0) >= trained_bar)
         if trained:
             top = sorted(
                 ((n, s.get("weight", 1.0), s.get("trades", 0))
@@ -2347,6 +2355,9 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
+        # ⚙️ user learning controls
+        self.user_threshold = float(settings.get("user_threshold", 0.05))
+        self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -2532,6 +2543,23 @@ class PaperEngine:
             "wr": s.get("wr"),
             "net": s.get("net"),
         }
+
+    def set_learning(self, threshold=None, speed=None):
+        if threshold is not None:
+            self.user_threshold = max(0.03, min(0.12, float(threshold)))
+        if speed is not None:
+            self.learn_speed = max(0.5, min(3.0, float(speed)))
+        s = _load_settings()
+        s["user_threshold"] = self.user_threshold
+        s["learn_speed"] = self.learn_speed
+        _save_settings(s)
+        self._event("settings",
+                    f"🎓 Mësimi: pragu {self.user_threshold:.2f}, "
+                    f"shpejtësia ×{self.learn_speed:g}")
+        return self.learning_controls()
+
+    def learning_controls(self):
+        return {"threshold": self.user_threshold, "speed": self.learn_speed}
 
     def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
         if enabled is not None:
@@ -3519,6 +3547,7 @@ async def status():
         "lock": engine.lock_info(),
         "risk": engine.risk_info(),
         "fixed_risk": engine.fixed_risk_info(),
+        "learning_ctrl": engine.learning_controls(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
@@ -3614,6 +3643,10 @@ async def set_settings(body: dict):
     if "compound_mult" in body:
         mult = engine.set_compound_mult(body["compound_mult"])
         return {"ok": True, "compound_mult": mult}
+    if "threshold" in body or "learn_speed" in body:
+        info = engine.set_learning(threshold=body.get("threshold"),
+                                   speed=body.get("learn_speed"))
+        return {"ok": True, "learning_ctrl": info}
     if any(k in body for k in ("fixed_risk_enabled", "fixed_entry_usd",
                                "fixed_max_loss_usd")):
         info = engine.set_fixed_risk(

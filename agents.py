@@ -746,7 +746,9 @@ class LearningAgent(Agent):
         e = self.engine
         try:
             with e._conn() as c:
-                fresh, max_id = aggregate_from_trades(c, e.learning_last_id)
+                explore_min = max(1, int(round(5 / getattr(e, "learn_speed", 1.0))))
+                fresh, max_id = aggregate_from_trades(
+                    c, e.learning_last_id, explore_min=explore_min)
             if max_id > e.learning_last_id:
                 e.learning_last_id = max_id
                 for name, st in fresh.items():
@@ -765,7 +767,8 @@ class LearningAgent(Agent):
                     "ORDER BY id DESC LIMIT ?", (META_WINDOW,)).fetchall()
             results = [r[0] or 0.0 for r in rows][::-1]
             meta["recent"] = results[-META_WINDOW:]
-            meta["threshold"] = meta_threshold(results)
+            meta["threshold"] = meta_threshold(
+                results, base=getattr(e, "user_threshold", 0.05))
             meta["system_win_rate"] = system_win_rate(results)
         except Exception:
             pass
@@ -786,8 +789,11 @@ class LearningAgent(Agent):
             e.learning_history = e.learning_history[-HISTORY_MAX:]
             save_history(e.learning_history)
 
+        # trained = strategies with enough trades (speed scales the bar)
+        speed = getattr(e, "learn_speed", 1.0)
+        trained_bar = max(1, int(round(5 / speed)))   # ×2 speed → 3 tregti
         trained = sum(1 for s in e.strategy_stats.values()
-                      if s.get("trades", 0) > 0)
+                      if s.get("trades", 0) >= trained_bar)
         if trained:
             top = sorted(
                 ((n, s.get("weight", 1.0), s.get("trades", 0))

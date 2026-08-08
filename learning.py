@@ -44,7 +44,7 @@ HISTORY_MAX = 240           # learning-curve points kept
 # ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
-def compute_weight(st):
+def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
     t = st["trades"]
     if t == 0:
         return 1.0
@@ -59,15 +59,15 @@ def compute_weight(st):
     w += max(-0.40, min(0.40, wr * 0.50))                 # win-rate edge
     w += max(-0.20, min(0.25, (pf - 1.0) * 0.15))         # profit-factor edge
     w += max(-0.25, min(0.30, rec / 40.0))                # recency
-    if t < EXPLORE_MIN_TRADES:                            # exploration bonus
-        w += (EXPLORE_MIN_TRADES - t) / EXPLORE_MIN_TRADES * 0.25
+    if t < explore_min:                                   # exploration bonus
+        w += (explore_min - t) / explore_min * 0.25
     return max(WEIGHT_MIN, min(WEIGHT_MAX, round(w, 3)))
 
 
 # ---------------------------------------------------------------------------
 # Aggregate per-strategy stats from the trades table
 # ---------------------------------------------------------------------------
-def aggregate_from_trades(conn, last_id=0):
+def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
     """Returns (stats dict keyed by strategy name, max trade id processed)."""
     rows = conn.execute(
         "SELECT id, votes, status, pnl FROM trades "
@@ -97,7 +97,7 @@ def aggregate_from_trades(conn, last_id=0):
             if len(st["recent"]) > RECENT_WINDOW:
                 st["recent"] = st["recent"][-RECENT_WINDOW:]
     for name, st in stats.items():
-        st["weight"] = compute_weight(st)
+        st["weight"] = compute_weight(st, explore_min)
         st["updated_at"] = time.time()
         # keep the dict clean for JSON
         st["recent"] = [round(x, 2) for x in st["recent"][-10:]]
@@ -123,15 +123,17 @@ def enrich(stats):
 # Meta-learning: adaptive consensus threshold from rolling system results
 # ---------------------------------------------------------------------------
 def meta_threshold(recent_results, base=BASE_THRESHOLD):
+    """base = user preference (default 0.05). The system nudges it:
+    winning → looser (0.8×), losing → stricter (1.6×), clamped 0.03..0.12."""
     if not recent_results:
-        return base
+        return round(base, 3)
     wins = sum(1 for r in recent_results if r > 0)
     wr = wins / len(recent_results)
     if wr >= 0.55:
         return round(max(0.03, base * 0.8), 3)      # exploit — looser
     if wr <= 0.42:
-        return round(min(0.10, base * 1.6), 3)      # conserve — stricter
-    return base
+        return round(min(0.12, base * 1.6), 3)      # conserve — stricter
+    return round(base, 3)
 
 
 def system_win_rate(recent_results):

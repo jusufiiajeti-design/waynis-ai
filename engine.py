@@ -140,6 +140,9 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
+        # ⚙️ user learning controls
+        self.user_threshold = float(settings.get("user_threshold", 0.05))
+        self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -325,6 +328,23 @@ class PaperEngine:
             "wr": s.get("wr"),
             "net": s.get("net"),
         }
+
+    def set_learning(self, threshold=None, speed=None):
+        if threshold is not None:
+            self.user_threshold = max(0.03, min(0.12, float(threshold)))
+        if speed is not None:
+            self.learn_speed = max(0.5, min(3.0, float(speed)))
+        s = _load_settings()
+        s["user_threshold"] = self.user_threshold
+        s["learn_speed"] = self.learn_speed
+        _save_settings(s)
+        self._event("settings",
+                    f"🎓 Mësimi: pragu {self.user_threshold:.2f}, "
+                    f"shpejtësia ×{self.learn_speed:g}")
+        return self.learning_controls()
+
+    def learning_controls(self):
+        return {"threshold": self.user_threshold, "speed": self.learn_speed}
 
     def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
         if enabled is not None:
