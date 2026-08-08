@@ -9,7 +9,9 @@ TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 4                    # max concurrent open positions (paper)
+MAX_OPEN = 8                    # max concurrent open positions (was 4 — more slots = more trades)
+MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
+TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 
 # ---- real money (spot, LONG-only) ----
 FEE_RATE = 0.001                # 0.1% per side (taker) — also simulated in paper
@@ -2698,8 +2700,8 @@ class RiskManagerAgent(Agent):
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
         else:
-            self.report(f"Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%"
-                        f"{risk_note}",
+            self.report(f"Risk: ≤{MAX_OPEN} pozicione, drawdown ≤10%, "
+                        f"ekspozim ≤35%{risk_note}",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
 
@@ -2839,6 +2841,32 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
+
+            # ⏱️ TIME-STOP — free the slot: if the position has been open
+            # longer than MAX_HOLD_MIN and hasn't hit TP, close it with a
+            # small loss (or at breakeven if already in profit).
+            try:
+                opened_ts = time.mktime(time.strptime(
+                    pos["opened_at"][:19], "%Y-%m-%dT%H:%M:%S"))
+                age_min = (time.time() - opened_ts) / 60
+            except Exception:
+                age_min = 0
+            if age_min >= MAX_HOLD_MIN:
+                pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
+                    if pos["side"] == "LONG" else \
+                    (pos["entry"] - price) / pos["entry"] * 100
+                if pnl_pct <= 0:
+                    # small time-stop loss (tiny, frees slot fast)
+                    ts_price = pos["entry"] * (1 - TIME_STOP_SL) \
+                        if pos["side"] == "LONG" else \
+                        pos["entry"] * (1 + TIME_STOP_SL)
+                    await e._close_trade(pos, ts_price, "time")
+                else:
+                    # in profit → lock breakeven, keep running a bit more
+                    e._update_sl(pos["id"],
+                                 pos["entry"] * 1.0002 if pos["side"] == "LONG"
+                                 else pos["entry"] * 0.9998)
+                continue
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)

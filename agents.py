@@ -37,7 +37,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, MAX_HOLD_MIN, TIME_STOP_SL, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -594,8 +594,8 @@ class RiskManagerAgent(Agent):
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
         else:
-            self.report(f"Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%"
-                        f"{risk_note}",
+            self.report(f"Risk: ≤{MAX_OPEN} pozicione, drawdown ≤10%, "
+                        f"ekspozim ≤35%{risk_note}",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
 
@@ -735,6 +735,32 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
+
+            # ⏱️ TIME-STOP — free the slot: if the position has been open
+            # longer than MAX_HOLD_MIN and hasn't hit TP, close it with a
+            # small loss (or at breakeven if already in profit).
+            try:
+                opened_ts = time.mktime(time.strptime(
+                    pos["opened_at"][:19], "%Y-%m-%dT%H:%M:%S"))
+                age_min = (time.time() - opened_ts) / 60
+            except Exception:
+                age_min = 0
+            if age_min >= MAX_HOLD_MIN:
+                pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
+                    if pos["side"] == "LONG" else \
+                    (pos["entry"] - price) / pos["entry"] * 100
+                if pnl_pct <= 0:
+                    # small time-stop loss (tiny, frees slot fast)
+                    ts_price = pos["entry"] * (1 - TIME_STOP_SL) \
+                        if pos["side"] == "LONG" else \
+                        pos["entry"] * (1 + TIME_STOP_SL)
+                    await e._close_trade(pos, ts_price, "time")
+                else:
+                    # in profit → lock breakeven, keep running a bit more
+                    e._update_sl(pos["id"],
+                                 pos["entry"] * 1.0002 if pos["side"] == "LONG"
+                                 else pos["entry"] * 0.9998)
+                continue
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
