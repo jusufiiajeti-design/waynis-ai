@@ -4,10 +4,10 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
 SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — lëvizje më të mëdha = fitime më të mëdha
-KLINES_TTL = 8.0                # cache klines më gjatë (5m qirinj) — cikle më të shpejta
+TRADE_TF = "15m"                # ⏱️ korniza 15-minutëshe — lëvizje të mëdha = fitime $1+ më shpesh
+KLINES_TTL = 20.0               # cache klines (15m qirinj) — cikle më të shpejta
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.0035            # +0.35 % (më afër → kapet më shpejt, më shumë fitore)
+TAKE_PROFIT = 0.20             # TP 20% = $3 me $15 — NUK ndërhyn para shkallës $1/$2 (mbyll Smart Exit)
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
@@ -3080,10 +3080,13 @@ class TrackerAgent(Agent):
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         if pnl_pct < 0.05:
             return None
-        # 💵 dollar ladder — fitimi në $ është kriteri kryesor
-        # (5m kornizë: kap $0.5 shpejt, pastaj $1/$2 kur lëvizja vazhdon)
+        # 💵 dollar ladder — MINIMUM $1 (asnjëherë nën $1!)
+        # Agjenti mban pozicionin derisa fitimi të arrijë $1, $2, $3+,
+        # pastaj e kap kur e sheh të arsyeshëm.
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        for rung in (2.0, 1.0, 0.5):
+        if pnl_usd < 1.0:
+            return None            # mban — fitimi nën $1 nuk kapet kurrë
+        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
             if pnl_usd >= rung:
                 return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
                         f"(shkalla ${rung:g}) — kapur")
@@ -3098,28 +3101,21 @@ class TrackerAgent(Agent):
         last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
             if len(closes) >= 3 else 0
 
+        # treguesit kapin VETËM me fitim >= $1 (që u kontrollua më lart)
         if side == "LONG":
-            if pnl_pct >= 0.30:
-                return f"smart: +{pnl_pct:.2f}% e arsyeshme — fitim i kapur"
-            if pnl_pct >= 0.15 and last2 < 0:
-                return f"smart: +{pnl_pct:.2f}% me momentum të dobësuar — kapur"
             if r > 68:
-                return "smart: RSI i mbingarkuar — fitim i kapur"
+                return "smart: RSI i mbingarkuar — +$1+ kapur"
             if e9 < e21:
-                return "smart: trendi u kthye poshtë — fitim i kapur"
+                return "smart: trendi u kthye poshtë — +$1+ kapur"
             if last2 < 0 and mom < 0:
-                return "smart: momentum i dobësuar — fitim i kapur"
+                return "smart: momentum i dobësuar — +$1+ kapur"
         else:
-            if pnl_pct >= 0.30:
-                return f"smart: +{pnl_pct:.2f}% e arsyeshme — fitim i kapur"
-            if pnl_pct >= 0.15 and last2 > 0:
-                return f"smart: +{pnl_pct:.2f}% me momentum të dobësuar — kapur"
             if r < 32:
-                return "smart: RSI i mbishitur — fitim i kapur"
+                return "smart: RSI i mbishitur — +$1+ kapur"
             if e9 > e21:
-                return "smart: trendi u kthye lart — fitim i kapur"
+                return "smart: trendi u kthye lart — +$1+ kapur"
             if last2 > 0 and mom > 0:
-                return "smart: momentum i dobësuar — fitim i kapur"
+                return "smart: momentum i dobësuar — +$1+ kapur"
         return None
 
     def _trail_profit(self, e, pos, price):
@@ -3130,11 +3126,11 @@ class TrackerAgent(Agent):
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        if pnl_usd < 0.5:
+        if pnl_usd < 1.0:
             return
-        # SL që kyç shkallën më të lartë të arritur
+        # SL që kyç shkallën më të lartë të arritur (min $1)
         locked = 0.0
-        for rung in (2.0, 1.0, 0.5):
+        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
             if pnl_usd >= rung:
                 locked = rung
                 break

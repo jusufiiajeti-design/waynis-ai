@@ -3,10 +3,10 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
 SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — lëvizje më të mëdha = fitime më të mëdha
-KLINES_TTL = 8.0                # cache klines më gjatë (5m qirinj) — cikle më të shpejta
+TRADE_TF = "15m"                # ⏱️ korniza 15-minutëshe — lëvizje të mëdha = fitime $1+ më shpesh
+KLINES_TTL = 20.0               # cache klines (15m qirinj) — cikle më të shpejta
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.0035            # +0.35 % (më afër → kapet më shpejt, më shumë fitore)
+TAKE_PROFIT = 0.20             # TP 20% = $3 me $15 — NUK ndërhyn para shkallës $1/$2 (mbyll Smart Exit)
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
