@@ -324,8 +324,8 @@
     </div>
 
     <div class="card">
-      <h3>⚙️ 6-Cycle Execution Pipeline · 20 Agjentë</h3>
-      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 20 agjentët…</div>
+      <h3>⚙️ 6-Cycle Execution Pipeline · 26 Agjentë</h3>
+      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 26 agjentët…</div>
       <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
@@ -426,7 +426,7 @@
     <div class="sec-t">🧪 Backtest (provë historike)</div>
     <div class="card">
       <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
-        Provon strategjinë 20-agjente në <b>~37 ditë të dhënash 1-orëshe</b>
+        Provon strategjinë 26-agjente në <b>~37 ditë të dhënash 1-orëshe</b>
         për 10 monedha, me <b>tarifa reale 0.1%/anë</b>. Ky është testi më i
         ndershëm përpara parave reale.
       </p>
@@ -552,6 +552,25 @@
         <div class="kbd" id="modeKbd">KOMPONIM</div>
       </div>
     </div>
+    <div class="sec-t">📡 TradingView</div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:8px">
+        Lidh <b>TradingView</b> me botin: kur vendos një alarm në TradingView,
+        sinjali vjen te boti dhe ekzekutohet me rregullat e tua (rreziku fiks $,
+        ×N, etj.).
+      </p>
+      <div style="font-size:11px;color:var(--mut);line-height:1.7;margin-bottom:8px">
+        <b>Si ta lidhësh:</b><br>
+        1. Në TradingView (Premium): krijo <b>Alert</b> → në <b>Webhook URL</b> ngjit:<br>
+        <code style="color:var(--blue);word-break:break-all" id="tvUrl">https://waynis-ai-1.onrender.com/api/webhook/tradingview</code><br>
+        2. Në <b>Message</b> vendos: <code style="color:var(--green)">{"symbol":"BTCUSDT","side":"buy"}</code><br>
+        3. Kur alarmi ndizet → boti ekzekuton tregtinë.<br>
+        <span style="color:var(--dim)">side: <b>buy</b> (LONG) ose <b>sell</b> (SHORT) · simboli pa vizë: BTCUSDT</span>
+      </div>
+      <button class="btn btn-ghost" id="btnTvTest" style="width:100%" onclick="testTv()">🧪 Testo sinjalin TradingView</button>
+      <div id="tvResult" style="font-size:11.5px;margin-top:8px;line-height:1.6"></div>
+    </div>
+
     <div class="sec-t">📈 DCA (blerje e rregullt)</div>
     <div class="card" style="padding:4px 12px">
       <div class="set">
@@ -914,7 +933,7 @@ function renderPipeline(pp){
 }
 function renderAgentsLine(agents){
   if(!agents) return;
-  $("agentsLine").innerHTML = "🤖 <b>20 agjentë bashkëpunues</b>: 10 strategji votojnë → " +
+  $("agentsLine").innerHTML = "🤖 <b>26 agjentë bashkëpunues</b>: 16 strategji votojnë → " +
     "🗳️ konsensus me pesha të mësuara · 🎓 mësojnë pas çdo tregtie";
 }
 function renderAgentsGrid(agents){
@@ -1183,6 +1202,20 @@ async function saveDcaSettings(){
   }catch(e){}
 }
 
+async function testTv(){
+  const b=$("btnTvTest"); b.disabled=true; b.textContent="⏳ Duke dërguar…";
+  $("tvResult").innerHTML='<span class="ai-thinking">📡 Duke dërguar sinjal test (LONG BTC-USDT)…</span>';
+  try{
+    const d=await jf("/api/webhook/tradingview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symbol:"BTCUSDT",side:"buy"})});
+    $("tvResult").innerHTML = d.ok
+      ? `✅ <b>Sinjali u pranua!</b> ${d.direction} ${d.symbol} · qty ${d.qty} · mode ${d.mode}`
+      : `⚠️ ${d.error||"Gabim"}`;
+    toast(d.ok?"📡 TradingView sinjal u ekzekutua":"TradingView: "+d.error);
+    refreshAll();
+  }catch(e){ $("tvResult").innerHTML='<span style="color:var(--red)">Gabim — provo sërish</span>'; }
+  b.disabled=false; b.textContent="🧪 Testo sinjalin TradingView";
+}
+
 async function runDcaBacktest(){
   const b=$("btnDcaBt"); b.disabled=true; b.textContent="⏳…";
   const sym=$("dcaBtSym").value||"BTC-USDT";
@@ -1279,7 +1312,8 @@ function drawLearnChart(){
 }
 const EMOJI={"EMA Trend":"📈","RSI Reversal":"🔄","MACD Momentum":"🌊","Bollinger Break":"🎈",
   "Stochastic":"⚡","Volume Spike":"🔊","ATR Channel":"📏","Donchian Break":"🚀",
-  "ROC Momentum":"🏎️","Slow Trend":"🐢"};
+  "ROC Momentum":"🏎️","Slow Trend":"🐢","Supertrend":"🌀","ADX Trend":"💪",
+  "VWAP Break":"⚖️","Williams %R":"🎯","Keltner Break":"📐","OBV Momentum":"📦"};
 
 async function saveLearning(){
   const t=parseFloat($("thrSel").value)||0.05;

@@ -1045,6 +1045,135 @@ def slow_trend(symbol, k, ticker):
 
 
 # ---------------------------------------------------------------------------
+# 🆕 Extra strategies (agents 11-16)
+# ---------------------------------------------------------------------------
+def supertrend(symbol, k, ticker):
+    """Supertrend: trend i fortë me kthim drejtimi."""
+    closes = [c["c"] for c in k]
+    if len(closes) < 12:
+        return None
+    atr14 = atr([c["h"] for c in k], [c["l"] for c in k], closes, 14)
+    if atr14 <= 0:
+        return None
+    factor = 3.0
+    upper = closes[-1] + factor * atr14
+    lower = closes[-1] - factor * atr14
+    # drejtimi i fundit i Supertrend-it (bazuar në mbyllje kundrejt brezave)
+    if closes[-1] > lower and closes[-2] > lower:
+        return {"direction": "LONG", "confidence": 58}
+    if closes[-1] < upper and closes[-2] < upper:
+        return {"direction": "SHORT", "confidence": 58}
+    return None
+
+
+def adx_trend(symbol, k, ticker):
+    """ADX: sa i fortë është trendi aktual."""
+    highs = [c["h"] for c in k]
+    lows = [c["l"] for c in k]
+    closes = [c["c"] for c in k]
+    if len(closes) < 20:
+        return None
+    # llogarit ADX thjeshtuar: DM+/DM- dhe TR
+    trs, pdm, ndm = [], [], []
+    for i in range(1, len(closes)):
+        tr = max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
+        up = highs[i] - highs[i-1]
+        dn = lows[i-1] - lows[i]
+        pdm.append(up if (up > dn and up > 0) else 0.0)
+        ndm.append(dn if (dn > up and dn > 0) else 0.0)
+        trs.append(tr)
+    if not trs:
+        return None
+    atr14 = sum(trs[-14:]) / min(14, len(trs))
+    if atr14 <= 0:
+        return None
+    pdi = sum(pdm[-14:]) / atr14 * 100
+    ndi = sum(ndm[-14:]) / atr14 * 100
+    adx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0
+    e9 = ema(closes, 9)[-1]
+    e21 = ema(closes, 21)[-1]
+    if adx > 20 and pdi > ndi and e9 > e21:
+        return {"direction": "LONG", "confidence": min(90, 55 + adx / 3)}
+    if adx > 20 and ndi > pdi and e9 < e21:
+        return {"direction": "SHORT", "confidence": min(90, 55 + adx / 3)}
+    return None
+
+
+def vwap_break(symbol, k, ticker):
+    """VWAP: çmimi mbi/nën vwap me volumin përcjellës."""
+    closes = [c["c"] for c in k]
+    vols = [c["v"] for c in k]
+    if len(closes) < 10:
+        return None
+    tp = [c["h"] + c["l"] + c["c"] for c in k]
+    vwap = sum(tp[i] * vols[i] for i in range(len(k))) / (3 * sum(vols)) if sum(vols) > 0 else closes[-1]
+    vr = vol_ratio(vols)
+    if closes[-1] > vwap and vr > 1.2:
+        return {"direction": "LONG", "confidence": 57}
+    if closes[-1] < vwap and vr > 1.2:
+        return {"direction": "SHORT", "confidence": 57}
+    return None
+
+
+def williams_r(symbol, k, ticker):
+    """Williams %R: mbishitur / mbishitur."""
+    closes = [c["c"] for c in k]
+    if len(closes) < 15:
+        return None
+    hn = max(c["h"] for c in k[-14:])
+    ln = min(c["l"] for c in k[-14:])
+    if hn == ln:
+        return None
+    wr = (hn - closes[-1]) / (hn - ln) * -100
+    if wr < -85:
+        return {"direction": "LONG", "confidence": 58}
+    if wr > -15:
+        return {"direction": "SHORT", "confidence": 58}
+    return None
+
+
+def keltner_break(symbol, k, ticker):
+    """Keltner: shpërthim jashtë kanalit me trendin EMA."""
+    closes = [c["c"] for c in k]
+    if len(closes) < 22:
+        return None
+    e20 = ema(closes, 20)[-1]
+    a = atr([c["h"] for c in k], [c["l"] for c in k], closes, 20)
+    if a <= 0:
+        return None
+    if closes[-1] > e20 + 1.5 * a and closes[-1] > closes[-2]:
+        return {"direction": "LONG", "confidence": 57}
+    if closes[-1] < e20 - 1.5 * a and closes[-1] < closes[-2]:
+        return {"direction": "SHORT", "confidence": 57}
+    return None
+
+
+def obv_momentum(symbol, k, ticker):
+    """OBV: konfirmim i lëvizjes me volumin kumulativ."""
+    closes = [c["c"] for c in k]
+    vols = [c["v"] for c in k]
+    if len(closes) < 15:
+        return None
+    obv = [0.0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            obv.append(obv[-1] + vols[i])
+        elif closes[i] < closes[i-1]:
+            obv.append(obv[-1] - vols[i])
+        else:
+            obv.append(obv[-1])
+    obv_ema9 = ema(obv, 9)[-1]
+    obv_ema21 = ema(obv, 21)[-1]
+    e9 = ema(closes, 9)[-1]
+    e21 = ema(closes, 21)[-1]
+    if obv_ema9 > obv_ema21 and e9 > e21:
+        return {"direction": "LONG", "confidence": 56}
+    if obv_ema9 < obv_ema21 and e9 < e21:
+        return {"direction": "SHORT", "confidence": 56}
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Registry (order matters for display)
 # ---------------------------------------------------------------------------
 STRATEGIES = [
@@ -1058,6 +1187,12 @@ STRATEGIES = [
     {"name": "Donchian Break",   "icon": "🚀", "fn": donchian_breakout},
     {"name": "ROC Momentum",     "icon": "🏎️", "fn": roc_momentum},
     {"name": "Slow Trend",       "icon": "🐢", "fn": slow_trend},
+    {"name": "Supertrend",       "icon": "🌀", "fn": supertrend},
+    {"name": "ADX Trend",        "icon": "💪", "fn": adx_trend},
+    {"name": "VWAP Break",       "icon": "⚖️", "fn": vwap_break},
+    {"name": "Williams %R",      "icon": "🎯", "fn": williams_r},
+    {"name": "Keltner Break",    "icon": "📐", "fn": keltner_break},
+    {"name": "OBV Momentum",     "icon": "📦", "fn": obv_momentum},
 ]
 
 
@@ -3661,6 +3796,94 @@ async def set_settings(body: dict):
         return {"ok": True, "lock": info}
     return {"ok": True, "auto_trade": engine.auto_trade,
             "compound": engine.compound, "mode": engine.mode}
+
+
+@app.post("/api/webhook/tradingview")
+async def tradingview_webhook(body: dict = None):
+    """Receives TradingView alerts (webhook) and turns them into trades.
+
+    In TradingView (Premium) create an Alert → Webhook URL →
+    paste this endpoint URL, and set the message (JSON):
+      {"symbol":"BTCUSDT","side":"buy","price":0}
+    side: buy/sell  (or long/short)
+    """
+    if body is None:
+        body = {}
+    symbol = str(body.get("symbol") or body.get("ticker") or "").upper()
+    side = str(body.get("side") or body.get("action") or body.get("direction") or "").lower()
+    price = float(body.get("price") or 0) or None
+
+    # normalize symbol: BTCUSDT -> BTC-USDT
+    if symbol and "-" not in symbol and symbol.endswith("USDT"):
+        symbol = symbol[:-4] + "-USDT"
+    # validate symbol is in watchlist
+    ok_syms = {w[0] for w in WATCHLIST}
+    if symbol not in ok_syms:
+        return {"ok": False, "error": f"Simboli '{symbol}' nuk është në watchlist"}
+
+    direction = None
+    if side in ("buy", "long", "l"):
+        direction = "LONG"
+    elif side in ("sell", "short", "s"):
+        direction = "SHORT"
+    else:
+        return {"ok": False, "error": f"Drejtimi '{side}' i panjohur (përdor buy/sell)"}
+
+    # build a signal and execute through the same engine path
+    import engine as eng
+    sig = {"symbol": symbol, "direction": direction,
+           "entry": price or (engine.last_tickers.get(symbol) or {}).get("price") or 0,
+           "confidence": 80.0}
+    # attach TP/SL (LONG: SL below; SHORT: SL above)
+    if direction == "LONG":
+        sig["tp"] = sig["entry"] * 1.0045
+        sig["sl"] = sig["entry"] * 0.9965
+    else:
+        sig["tp"] = sig["entry"] * 0.9955
+        sig["sl"] = sig["entry"] * 1.0035
+    if not sig["entry"]:
+        tickers = await market.fetch_all_tickers()
+        engine.last_tickers = tickers
+        sig["entry"] = (tickers.get(symbol) or {}).get("price") or 0
+    if not sig["entry"]:
+        return {"ok": False, "error": "Nuk u gjet çmimi"}
+
+    qty = 0.0
+    if engine.fixed_risk_enabled:
+        notional = engine.fixed_entry_usd
+        sl_pct = 0.0035
+        qty = min(notional / sig["entry"],
+                  engine.fixed_max_loss_usd / (sig["entry"] * sl_pct))
+    else:
+        qty = (engine.account()["equity"] * 0.35) / sig["entry"]
+
+    if qty <= 0:
+        return {"ok": False, "error": "Madhësi zero"}
+
+    if engine.mode == "real" and engine.exchange.configured:
+        tid = await engine.real_open(sig, qty)
+    else:
+        tid = engine._open_trade(sig, qty, votes=["TradingView"])
+        if tid:
+            engine._event("tv",
+                          f"📡 TradingView: {direction} {symbol} "
+                          f"{qty:.6f} @ {sig['entry']:.6g}",
+                          symbol)
+
+    engine._event("settings",
+                  f"📡 TradingView sinjal: {direction} {symbol}")
+    return {"ok": True, "trade_id": tid, "symbol": symbol,
+            "direction": direction, "qty": round(qty, 6),
+            "entry": sig["entry"], "mode": engine.mode}
+
+
+@app.get("/api/webhook/info")
+async def webhook_info():
+    """Instructions + the webhook URL to paste into TradingView."""
+    return {"ok": True,
+            "webhook_url": f"https://waynis-ai-1.onrender.com/api/webhook/tradingview",
+            "example": '{"symbol":"BTCUSDT","side":"buy"}',
+            "note": "Vendos URL-në te TradingView → Alert → Webhook URL"}
 
 
 @app.get("/api/learning")

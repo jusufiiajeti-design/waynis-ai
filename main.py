@@ -355,6 +355,94 @@ async def set_settings(body: dict):
             "compound": engine.compound, "mode": engine.mode}
 
 
+@app.post("/api/webhook/tradingview")
+async def tradingview_webhook(body: dict = None):
+    """Receives TradingView alerts (webhook) and turns them into trades.
+
+    In TradingView (Premium) create an Alert → Webhook URL →
+    paste this endpoint URL, and set the message (JSON):
+      {"symbol":"BTCUSDT","side":"buy","price":0}
+    side: buy/sell  (or long/short)
+    """
+    if body is None:
+        body = {}
+    symbol = str(body.get("symbol") or body.get("ticker") or "").upper()
+    side = str(body.get("side") or body.get("action") or body.get("direction") or "").lower()
+    price = float(body.get("price") or 0) or None
+
+    # normalize symbol: BTCUSDT -> BTC-USDT
+    if symbol and "-" not in symbol and symbol.endswith("USDT"):
+        symbol = symbol[:-4] + "-USDT"
+    # validate symbol is in watchlist
+    ok_syms = {w[0] for w in WATCHLIST}
+    if symbol not in ok_syms:
+        return {"ok": False, "error": f"Simboli '{symbol}' nuk është në watchlist"}
+
+    direction = None
+    if side in ("buy", "long", "l"):
+        direction = "LONG"
+    elif side in ("sell", "short", "s"):
+        direction = "SHORT"
+    else:
+        return {"ok": False, "error": f"Drejtimi '{side}' i panjohur (përdor buy/sell)"}
+
+    # build a signal and execute through the same engine path
+    import engine as eng
+    sig = {"symbol": symbol, "direction": direction,
+           "entry": price or (engine.last_tickers.get(symbol) or {}).get("price") or 0,
+           "confidence": 80.0}
+    # attach TP/SL (LONG: SL below; SHORT: SL above)
+    if direction == "LONG":
+        sig["tp"] = sig["entry"] * 1.0045
+        sig["sl"] = sig["entry"] * 0.9965
+    else:
+        sig["tp"] = sig["entry"] * 0.9955
+        sig["sl"] = sig["entry"] * 1.0035
+    if not sig["entry"]:
+        tickers = await market.fetch_all_tickers()
+        engine.last_tickers = tickers
+        sig["entry"] = (tickers.get(symbol) or {}).get("price") or 0
+    if not sig["entry"]:
+        return {"ok": False, "error": "Nuk u gjet çmimi"}
+
+    qty = 0.0
+    if engine.fixed_risk_enabled:
+        notional = engine.fixed_entry_usd
+        sl_pct = 0.0035
+        qty = min(notional / sig["entry"],
+                  engine.fixed_max_loss_usd / (sig["entry"] * sl_pct))
+    else:
+        qty = (engine.account()["equity"] * 0.35) / sig["entry"]
+
+    if qty <= 0:
+        return {"ok": False, "error": "Madhësi zero"}
+
+    if engine.mode == "real" and engine.exchange.configured:
+        tid = await engine.real_open(sig, qty)
+    else:
+        tid = engine._open_trade(sig, qty, votes=["TradingView"])
+        if tid:
+            engine._event("tv",
+                          f"📡 TradingView: {direction} {symbol} "
+                          f"{qty:.6f} @ {sig['entry']:.6g}",
+                          symbol)
+
+    engine._event("settings",
+                  f"📡 TradingView sinjal: {direction} {symbol}")
+    return {"ok": True, "trade_id": tid, "symbol": symbol,
+            "direction": direction, "qty": round(qty, 6),
+            "entry": sig["entry"], "mode": engine.mode}
+
+
+@app.get("/api/webhook/info")
+async def webhook_info():
+    """Instructions + the webhook URL to paste into TradingView."""
+    return {"ok": True,
+            "webhook_url": f"https://waynis-ai-1.onrender.com/api/webhook/tradingview",
+            "example": '{"symbol":"BTCUSDT","side":"buy"}',
+            "note": "Vendos URL-në te TradingView → Alert → Webhook URL"}
+
+
 @app.get("/api/learning")
 async def learning():
     return {"ok": True, "learning": engine.learning_status()}
