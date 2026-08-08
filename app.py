@@ -3693,7 +3693,7 @@ class PaperEngine:
             frac = i / n
             t = now - (n - i) * (span / n)
             val = STARTING_BALANCE + (end - STARTING_BALANCE) * frac
-            if i < n:
+            if 0 < i < n:    # pika e parë (24 orë më parë) = saktësisht 10,000
                 val += (rng.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
