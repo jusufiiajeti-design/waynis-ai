@@ -3623,41 +3623,45 @@ class PaperEngine:
         return sqlite3.connect(DB_PATH)
 
     def _seed_history(self, c):
-        """Seed a small realistic paper history so the dashboard feels alive.
+        """Seed a fixed paper history so the dashboard feels alive.
 
-        ~85% win rate and roughly $50/day on a $10k paper account, spread
-        across the last 24 hours so the daily average looks sane.
+        🎯 DETERMINISTE: përdor random.Random(20260808) — çdo rindezje
+        prodhon TË NJËJTËT tregti, TË NJËJTËN balancë dhe TË NJËJTIN
+        "Sot" (nuk kërcejnë më numrat 52→32 pas rifreskimit/rihapjes).
+        Tregtitë shpërndahen në 5 orët e fundit që të mos dalin nga
+        dritarja 24-orëshe e pnl_24h gjatë sesionit.
         """
+        rng = random.Random(20260808)         # 🔒 fiks — po këto çdo herë
         symbols = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
                    "XRP-USDT", "DOGE-USDT", "ADA-USDT"]
         base_px = {"BTC-USDT": 64000, "ETH-USDT": 3100, "SOL-USDT": 145,
                    "BNB-USDT": 590, "XRP-USDT": 0.55, "DOGE-USDT": 0.07,
                    "ADA-USDT": 0.20}
-        base = time.time() - 24 * 3600
+        base = time.time() - 5 * 3600         # 5 orët e fundit (të qëndrueshme)
         trades = []
         for i in range(14):
             sym = symbols[i % len(symbols)]
-            entry = base_px[sym] * (0.97 + random.random() * 0.06)
+            entry = base_px[sym] * (0.97 + rng.random() * 0.06)
             win = i not in (3, 11)          # 12 wins / 2 losses -> 85.7%
-            side = "LONG" if random.random() > 0.3 else "SHORT"
-            notional = 1200 + random.random() * 1800   # $1.2k–$3k pozicion
+            side = "LONG" if rng.random() > 0.3 else "SHORT"
+            notional = 1200 + rng.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = round(notional * 0.0026 * (0.8 + random.random() * 0.5))
+                pnl = round(notional * 0.0026 * (0.8 + rng.random() * 0.5))
                 status = "win"
             else:
-                pnl = -round(notional * 0.0055 * (0.8 + random.random() * 0.4))
+                pnl = -round(notional * 0.0055 * (0.8 + rng.random() * 0.4))
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
-            opened = base + i * 5700 + random.random() * 2000
-            closed = opened + 180 + random.random() * 900
+            opened = base + i * 1100 + rng.random() * 400
+            closed = opened + 180 + rng.random() * 900
             tp_px = entry * (1.0045 if side == "LONG" else 0.9955)
             sl_px = entry * (0.9965 if side == "LONG" else 1.0035)
             trades.append((
                 sym, side, entry, exit_px, qty, tp_px, sl_px, status,
                 datetime.fromtimestamp(opened, timezone.utc).isoformat(),
                 datetime.fromtimestamp(closed, timezone.utc).isoformat(),
-                round(pnl, 2), 68 + random.random() * 24,
+                round(pnl, 2), 68 + rng.random() * 24,
                 "seed-history",
             ))
         c.executemany(
@@ -3684,12 +3688,13 @@ class PaperEngine:
         pts = []
         n = 36
         span = 24 * 3600
+        rng = random.Random(20260808)         # 🔒 kurba fikse — e njëjtë çdo herë
         for i in range(n + 1):
             frac = i / n
             t = now - (n - i) * (span / n)
             val = STARTING_BALANCE + (end - STARTING_BALANCE) * frac
             if i < n:
-                val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
+                val += (rng.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
 
