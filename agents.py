@@ -125,7 +125,8 @@ class ScannerAgent(Agent):
         syms = [w[0] for w in WATCHLIST]
         open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
-        batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
+        # scan ALL watchlist symbols each cycle (faster, more opportunities)
+        batch = syms[:]
 
         scanned = []
         for sym in batch:
@@ -133,12 +134,17 @@ class ScannerAgent(Agent):
                 continue
             if sym in e.cooldown and now - e.cooldown[sym] < 300:
                 continue
-            klines = await ctx.market.fetch_klines(sym, "1m", 60)
+            # use cache when fresh — skips the network call → much faster cycles
+            klines = e.get_klines_cached(sym, "1m", 60, ttl=4.0)
+            if klines is None:
+                klines = await ctx.market.fetch_klines(sym, "1m", 60)
+                if len(klines) >= 30:
+                    e.klines_cache[(sym, "1m")] = (time.time(), klines)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.02)
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")
@@ -208,6 +214,16 @@ class EnsembleVoterAgent(Agent):
         klines = ctx.candles.get(best_sym)
         if not klines:
             return
+        # cache ensemble votes for ~10s — 100 variants aren't recomputed
+        # every cycle, so cycles run much faster
+        ecache = e.ensemble_cache
+        now = time.time()
+        cached = ecache.get(best_sym)
+        if cached and now - cached[0] < 10.0:
+            ctx.votes.setdefault(best_sym, []).extend(cached[1])
+            self.report(f"🧩 {len(cached[1])} variante (nga cache) — "
+                        f"konsensus i plotë")
+            return
         ticker = ctx.tickers.get(best_sym)
         voted = 0
         votes_list = ctx.votes.setdefault(best_sym, [])
@@ -220,6 +236,8 @@ class EnsembleVoterAgent(Agent):
                     voted += 1
             except Exception:
                 continue
+        if voted:
+            ecache[best_sym] = (now, list(votes_list))
         if voted:
             self.report(f"🧩 {voted}/{len(variants)} variante votuan për "
                         f"{best_sym} — konsensus i plotë")

@@ -146,6 +146,9 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
+        # ⚡ perf caches (make cycles much faster)
+        self.klines_cache = {}                       # (sym,bar) -> (ts, klines)
+        self.ensemble_cache = {}                     # sym -> (ts, votes)
         # ⚙️ user learning controls
         self.user_threshold = float(settings.get("user_threshold", 0.05))
         self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
@@ -180,6 +183,15 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # DB helpers
     # ------------------------------------------------------------------
+    def get_klines_cached(self, symbol, interval="1m", limit=60, ttl=4.0):
+        """Reuse klines for TTL seconds → no refetch every cycle."""
+        key = (symbol, interval)
+        now = time.time()
+        hit = self.klines_cache.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+        return None
+
     def _ensure_db(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with self._conn() as c:

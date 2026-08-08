@@ -2,8 +2,8 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
+CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
+SCAN_BATCH = 20                 # symbols scanned per cycle (all watchlist)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
@@ -2229,7 +2229,8 @@ class ScannerAgent(Agent):
         syms = [w[0] for w in WATCHLIST]
         open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
-        batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
+        # scan ALL watchlist symbols each cycle (faster, more opportunities)
+        batch = syms[:]
 
         scanned = []
         for sym in batch:
@@ -2237,12 +2238,17 @@ class ScannerAgent(Agent):
                 continue
             if sym in e.cooldown and now - e.cooldown[sym] < 300:
                 continue
-            klines = await ctx.market.fetch_klines(sym, "1m", 60)
+            # use cache when fresh — skips the network call → much faster cycles
+            klines = e.get_klines_cached(sym, "1m", 60, ttl=4.0)
+            if klines is None:
+                klines = await ctx.market.fetch_klines(sym, "1m", 60)
+                if len(klines) >= 30:
+                    e.klines_cache[(sym, "1m")] = (time.time(), klines)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.02)
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")
@@ -2312,6 +2318,16 @@ class EnsembleVoterAgent(Agent):
         klines = ctx.candles.get(best_sym)
         if not klines:
             return
+        # cache ensemble votes for ~10s — 100 variants aren't recomputed
+        # every cycle, so cycles run much faster
+        ecache = e.ensemble_cache
+        now = time.time()
+        cached = ecache.get(best_sym)
+        if cached and now - cached[0] < 10.0:
+            ctx.votes.setdefault(best_sym, []).extend(cached[1])
+            self.report(f"🧩 {len(cached[1])} variante (nga cache) — "
+                        f"konsensus i plotë")
+            return
         ticker = ctx.tickers.get(best_sym)
         voted = 0
         votes_list = ctx.votes.setdefault(best_sym, [])
@@ -2324,6 +2340,8 @@ class EnsembleVoterAgent(Agent):
                     voted += 1
             except Exception:
                 continue
+        if voted:
+            ecache[best_sym] = (now, list(votes_list))
         if voted:
             self.report(f"🧩 {voted}/{len(variants)} variante votuan për "
                         f"{best_sym} — konsensus i plotë")
@@ -3097,6 +3115,9 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
+        # ⚡ perf caches (make cycles much faster)
+        self.klines_cache = {}                       # (sym,bar) -> (ts, klines)
+        self.ensemble_cache = {}                     # sym -> (ts, votes)
         # ⚙️ user learning controls
         self.user_threshold = float(settings.get("user_threshold", 0.05))
         self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
@@ -3131,6 +3152,15 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # DB helpers
     # ------------------------------------------------------------------
+    def get_klines_cached(self, symbol, interval="1m", limit=60, ttl=4.0):
+        """Reuse klines for TTL seconds → no refetch every cycle."""
+        key = (symbol, interval)
+        now = time.time()
+        hit = self.klines_cache.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+        return None
+
     def _ensure_db(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with self._conn() as c:

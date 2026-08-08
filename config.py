@@ -1,8 +1,8 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
+CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
+SCAN_BATCH = 20                 # symbols scanned per cycle (all watchlist)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
