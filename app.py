@@ -4,10 +4,10 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
 SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "15m"                # ⏱️ korniza 15-minutëshe — lëvizje të mëdha = fitime $1+ më shpesh
-KLINES_TTL = 20.0               # cache klines (15m qirinj) — cikle më të shpejta
+TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — E FIKSUAR (kërkesa e përdoruesit: mos e ndërro)
+KLINES_TTL = 20.0               # cache klines (5m qirinj) — cikle më të shpejta
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.20             # TP 20% = $3 me $15 — NUK ndërhyn para shkallës $1/$2 (mbyll Smart Exit)
+TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5 — kurrë nuk ndërhyn me centa
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
@@ -51,7 +51,9 @@ FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
-PROFIT_LADDER = [3.0, 2.0, 1.0, 0.5]   # fitime $0.5, $1, $2, $3+ të arsyeshme
+# VETËM dollarë të plotë: $1, $2, $3, $4, $5 — kurrë centa (p.sh. JO $1.04).
+# Fitimi neto (pas tarifave) matet kundrejt shkallës dhe kapet si dollar i plotë.
+PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core
@@ -79,8 +81,6 @@ MTF_BAR = "15m"
 MTF_FAST = 20                    # EMA fast period on MTF
 MTF_SLOW = 50                    # EMA slow period on MTF
 MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
-
-
 
 
 # ============ providers.py ============
@@ -361,8 +361,6 @@ class MarketData:
             if okx == s:
                 return okx
         return s if s.endswith("-USDT") else f"{s}-USDT"
-
-
 # ============ brain.py ============
 """
 Waynis AI — AI BRAIN (reasoning layer for the agents).
@@ -800,8 +798,6 @@ class AIBrain:
             return True
         except Exception:
             return False
-
-
 # ============ strategies.py ============
 """
 Waynis AI — 10 strategy agents (deterministic signal generators).
@@ -1771,8 +1767,6 @@ def _v_breakeven_trend(period):
             return {"direction": "SHORT", "confidence": 55}
         return None
     return fn
-
-
 # ============ learning.py ============
 """
 Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
@@ -1957,8 +1951,6 @@ def save_history(history):
             json.dump(history[-HISTORY_MAX:], f)
     except Exception:
         pass
-
-
 # ============ backtest.py ============
 """
 Waynis AI — BACKTEST engine.
@@ -1971,9 +1963,11 @@ money BEFORE risking real capital.
 """
 import time
 
+from config import FEE_RATE
 
 _TP = 0.0045
 _SL = 0.0035
+from strategies import STRATEGIES
 
 BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
 WARMUP = 40                     # candles used to warm indicators
@@ -2133,8 +2127,6 @@ def summarize(results):
         "net_per_trade": round(total_pnl / n, 3) if n else 0.0,
         "done_at": time.time(),
     }
-
-
 # ============ agents.py ============
 """
 Waynis AI — 20-AGENT collaborative control system.
@@ -2173,6 +2165,19 @@ import json
 import os
 import time
 
+from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
+                    TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
+                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
+                    REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
+                    REAL_MAX_POSITIONS,
+                    ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
+                    TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST,
+                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL)
+from providers import WATCHLIST
+from strategies import STRATEGIES, vol_ratio, rsi, ema
+from learning import (aggregate_from_trades, meta_threshold,
+                      system_win_rate, save_history,
+                      DEFAULT_STATS, META_WINDOW, HISTORY_MAX)
 
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 
@@ -3019,9 +3024,15 @@ class TrackerAgent(Agent):
             # 🧠 SMART EXIT — mbyll me fitim kur agjentët e shohin të
             # arsyeshme (trend i mbaruar, RSI ekstrem, momentum i dobësuar).
             # Nuk ka afat kohor — vendimi bazohet në tregun real.
+            # Fitimi kapet GJITHMONË në dollarë të plotë ($1, $2, $3...),
+            # kurrë me centa (p.sh. JO $1.04).
             exit_reason = self._smart_exit(e, pos, price, ctx)
             if exit_reason:
-                await e._close_trade(pos, price, exit_reason)
+                if isinstance(exit_reason, tuple):
+                    reason, banked = exit_reason
+                else:
+                    reason, banked = exit_reason, None
+                await e._close_trade(pos, price, reason, banked=banked)
                 continue
 
             # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
@@ -3070,26 +3081,28 @@ class TrackerAgent(Agent):
 
     def _smart_exit(self, e, pos, price, ctx):
         """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
-        • Shkalla në $: +$0.5, +$1, +$2, +$3 → kapet sa t'ia arrijë
-        • +0.30% e arsyeshme → kapet gjithmonë
-        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet
-        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit."""
+        • Shkalla në $ TË PLOTË: +$1, +$2, +$3, +$4, +$5 → kapet sa t'ia arrijë
+        • Fitimi matet NETO (pas tarifave) kundrejt shkallës — kurrë centa
+        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet (dollar i plotë)
+        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit.
+        Kthen (arsye, dollar_i_plote) ose None."""
         side = pos["side"]
         qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         if pnl_pct < 0.05:
             return None
-        # 💵 dollar ladder — MINIMUM $1 (asnjëherë nën $1!)
-        # Agjenti mban pozicionin derisa fitimi të arrijë $1, $2, $3+,
-        # pastaj e kap kur e sheh të arsyeshëm.
+        # 💵 dollar ladder — MINIMUM $1 neto (asnjëherë nën $1!)
+        # Agjenti mban pozicionin derisa fitimi NETO të arrijë $1, $2, $3+,
+        # pastaj e kap si dollar të plotë — kurrë me centa (p.sh. JO $1.04).
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        if pnl_usd < 1.0:
+        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE   # tarifat hyrje+dalje
+        net_usd = pnl_usd - fees_est
+        if net_usd < 1.0:
             return None            # mban — fitimi nën $1 nuk kapet kurrë
         for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if pnl_usd >= rung:
-                return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
-                        f"(shkalla ${rung:g}) — kapur")
+            if net_usd >= rung:
+                return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
         klines = ctx.candles.get(pos["symbol"])
         if not klines or len(klines) < 30:
             return None
@@ -3101,45 +3114,54 @@ class TrackerAgent(Agent):
         last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
             if len(closes) >= 3 else 0
 
-        # treguesit kapin VETËM me fitim >= $1 (që u kontrollua më lart)
+        # treguesit kapin VETËM me fitim neto >= $1 — gjithmonë dollar i plotë
+        bank = float(int(net_usd))          # p.sh. $1.37 → kapet si $1 (pa centa)
         if side == "LONG":
             if r > 68:
-                return "smart: RSI i mbingarkuar — +$1+ kapur"
+                return ("smart: RSI i mbingarkuar — fitim i arsyeshëm", bank)
             if e9 < e21:
-                return "smart: trendi u kthye poshtë — +$1+ kapur"
+                return ("smart: trendi u kthye poshtë — fitim i arsyeshëm", bank)
             if last2 < 0 and mom < 0:
-                return "smart: momentum i dobësuar — +$1+ kapur"
+                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
         else:
             if r < 32:
-                return "smart: RSI i mbishitur — +$1+ kapur"
+                return ("smart: RSI i mbishitur — fitim i arsyeshëm", bank)
             if e9 > e21:
-                return "smart: trendi u kthye lart — +$1+ kapur"
+                return ("smart: trendi u kthye lart — fitim i arsyeshëm", bank)
             if last2 > 0 and mom > 0:
-                return "smart: momentum i dobësuar — +$1+ kapur"
+                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
         return None
 
     def _trail_profit(self, e, pos, price):
-        """Trailing + shkalla në $: SL lëviz për të kyçur $0.5/$1/$2/$3
-        sapo arrihen — fitimi i arsyeshëm mbrohet gjithmonë."""
+        """Trailing + shkalla në $: SL lëviz për të kyçur $1/$2/$3/$4/$5
+        sapo arrihen NETO (pas tarifave) — fitimi i arsyeshëm mbrohet gjithmonë,
+        gjithmonë në dollarë të plotë (kurrë centa)."""
         side = pos["side"]
         qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        if pnl_usd < 1.0:
+        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE
+        net_usd = pnl_usd - fees_est
+        if net_usd < 1.0:
             return
-        # SL që kyç shkallën më të lartë të arritur (min $1)
+        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë)
         locked = 0.0
         for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if pnl_usd >= rung:
+            if net_usd >= rung:
                 locked = rung
                 break
+        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë).
+        # Çmimi i SL llogaritet që fitimi NETO (pas tarifave) = saktësisht
+        # shkalla — kështu edhe kur SL e prek, kapet $1.00 / $2.00, kurrë centa.
         if side == "LONG":
-            new_sl = pos["entry"] + locked / qty
+            new_sl = (locked + pos["entry"] * qty * (1 + FEE_RATE)) \
+                / (qty * (1 - FEE_RATE))
             if new_sl > pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
         else:
-            new_sl = pos["entry"] - locked / qty
+            new_sl = (pos["entry"] * qty * (1 - FEE_RATE) - locked) \
+                / (qty * (1 + FEE_RATE))
             if new_sl < pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
 
@@ -3156,8 +3178,16 @@ class TrackerAgent(Agent):
                 new_sl = pos["entry"] * 0.9995
                 if new_sl < pos["sl"]:
                     e._update_sl(pos["id"], new_sl)
-        if hit_tp or hit_sl:
-            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+        if hit_tp:
+            # 💵 edhe TP (rrjet sigurie) kapet si dollar i plotë — kurrë centa
+            pnl_usd = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
+                else (pos["entry"] - price) * pos["qty"]
+            fees = (pos["entry"] + price) * pos["qty"] * FEE_RATE
+            net = pnl_usd - fees
+            banked = float(max(1, int(net))) if net > 0 else None
+            await e._close_trade(pos, price, "tp", banked=banked)
+        elif hit_sl:
+            await e._close_trade(pos, price, "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]
@@ -3249,8 +3279,6 @@ ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
                AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
                RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
                LearningAgent])
-
-
 # ============ engine.py ============
 """
 Waynis AI — trading engine (COORDINATOR).
@@ -3274,7 +3302,28 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
+from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
+                    TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT, MIN_CONFIDENCE,
+                    MAX_OPEN, FEE_RATE, REAL_MIN_NOTIONAL,
+                    REAL_MAX_NOTIONAL_PCT, REAL_MAX_POSITIONS,
+                    ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
+                    TRAIL_PCT, RUNNER_BE,
+                    EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
+                    EQUITY_LOCK_PAUSE_MIN,
+                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL,
+                    COMPOUND_MULT_MAX,
+                    RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
+                    RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
+                    RISK_RESUME_MIN,
+                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
+                    ENSEMBLE_ENABLED, AGENT_TARGET)
+from providers import MarketData, WATCHLIST
+from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
+                    load_weights, save_weights, DEFAULT_STATS)
+from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
+from learning import load_history, enrich
+from strategies import generate_variant_strategies
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -4137,11 +4186,16 @@ class PaperEngine:
         with self._conn() as c:
             c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
 
-    async def _close_trade(self, pos, price, reason):
+    async def _close_trade(self, pos, price, reason, banked=None):
         """Close a PAPER position (with real fees simulated).
         If TP1 already banked half the profit, the trade's total PnL shown
         in the ledger = runner PnL + partial PnL (balance credits only the
-        runner part — the partial was already credited at TP1)."""
+        runner part — the partial was already credited at TP1).
+
+        💵 `banked` = dollarë të plotë ($1, $2, $3...) që agjenti kyçi —
+        fitimi regjistrohet si dollar i plotë, KURRË me centa (p.sh. JO $1.04).
+        `min(pnl, banked)` garanton që kurrë nuk regjistrohet më shumë se
+        fitimi real (neto) i pozicionit."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -4149,6 +4203,8 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
+        if banked is not None:
+            pnl = round(min(pnl, banked), 2)     # 💵 dollar i plotë, kurrë centa
         partial = pos.get("partial_pnl") or 0.0
         total_pnl = pnl + partial
         status = "win" if total_pnl > 0 else "loss"
@@ -4161,12 +4217,25 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        if reason.startswith("smart:"):
+            label = "Smart"
+        elif reason == "tp":
+            label = "TP"
+        elif reason == "sl":
+            label = "SL"
+        else:
+            label = "exit"
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
-                    f"(tarifa ${fees:.2f})",
+                    f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
+                    f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    @staticmethod
+    def _fmt_usd(x):
+        """Formaton dollarët: $1 → '1', $1.37 → '1.37' (fitimet e kyçura
+        janë gjithmonë dollarë të plotë, kështu dalin pa centa)."""
+        return f"{x:g}" if abs(x - round(x)) < 1e-9 else f"{x:.2f}"
 
     # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)
@@ -4342,8 +4411,6 @@ class PaperEngine:
             "trained": sum(1 for s in self.strategy_stats.values()
                            if s.get("trades", 0) > 0),
         }
-
-
 # ============ main.py ============
 """
 Waynis AI — paper trading bot. FastAPI server.
@@ -4359,6 +4426,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from providers import MarketData, WATCHLIST
+from engine import PaperEngine, CYCLE_SECONDS
+from config import FEE_RATE, SCAN_BATCH
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = BASE          # files live at project root (flat, phone-friendly deploy)

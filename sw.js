@@ -1,5 +1,5 @@
-/* Waynis AI — service worker v2 (network-first for pages) */
-const CACHE = "waynis-v2";
+/* Waynis AI — service worker v3 (network-first for pages) */
+const CACHE = "waynis-v3";
 
 self.addEventListener("install", e => {
   self.skipWaiting();

@@ -3,10 +3,10 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
 SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "15m"                # ⏱️ korniza 15-minutëshe — lëvizje të mëdha = fitime $1+ më shpesh
-KLINES_TTL = 20.0               # cache klines (15m qirinj) — cikle më të shpejta
+TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — E FIKSUAR (kërkesa e përdoruesit: mos e ndërro)
+KLINES_TTL = 20.0               # cache klines (5m qirinj) — cikle më të shpejta
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.20             # TP 20% = $3 me $15 — NUK ndërhyn para shkallës $1/$2 (mbyll Smart Exit)
+TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5 — kurrë nuk ndërhyn me centa
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
@@ -50,7 +50,9 @@ FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
-PROFIT_LADDER = [3.0, 2.0, 1.0, 0.5]   # fitime $0.5, $1, $2, $3+ të arsyeshme
+# VETËM dollarë të plotë: $1, $2, $3, $4, $5 — kurrë centa (p.sh. JO $1.04).
+# Fitimi neto (pas tarifave) matet kundrejt shkallës dhe kapet si dollar i plotë.
+PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
 
 # ---- 🧩 ensemble (hundreds of strategy variants) ----
 ENSEMBLE_ENABLED = True          # strategy variants vote with the core

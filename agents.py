@@ -894,9 +894,15 @@ class TrackerAgent(Agent):
             # 🧠 SMART EXIT — mbyll me fitim kur agjentët e shohin të
             # arsyeshme (trend i mbaruar, RSI ekstrem, momentum i dobësuar).
             # Nuk ka afat kohor — vendimi bazohet në tregun real.
+            # Fitimi kapet GJITHMONË në dollarë të plotë ($1, $2, $3...),
+            # kurrë me centa (p.sh. JO $1.04).
             exit_reason = self._smart_exit(e, pos, price, ctx)
             if exit_reason:
-                await e._close_trade(pos, price, exit_reason)
+                if isinstance(exit_reason, tuple):
+                    reason, banked = exit_reason
+                else:
+                    reason, banked = exit_reason, None
+                await e._close_trade(pos, price, reason, banked=banked)
                 continue
 
             # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
@@ -945,26 +951,28 @@ class TrackerAgent(Agent):
 
     def _smart_exit(self, e, pos, price, ctx):
         """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
-        • Shkalla në $: +$0.5, +$1, +$2, +$3 → kapet sa t'ia arrijë
-        • +0.30% e arsyeshme → kapet gjithmonë
-        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet
-        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit."""
+        • Shkalla në $ TË PLOTË: +$1, +$2, +$3, +$4, +$5 → kapet sa t'ia arrijë
+        • Fitimi matet NETO (pas tarifave) kundrejt shkallës — kurrë centa
+        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet (dollar i plotë)
+        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit.
+        Kthen (arsye, dollar_i_plote) ose None."""
         side = pos["side"]
         qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         if pnl_pct < 0.05:
             return None
-        # 💵 dollar ladder — MINIMUM $1 (asnjëherë nën $1!)
-        # Agjenti mban pozicionin derisa fitimi të arrijë $1, $2, $3+,
-        # pastaj e kap kur e sheh të arsyeshëm.
+        # 💵 dollar ladder — MINIMUM $1 neto (asnjëherë nën $1!)
+        # Agjenti mban pozicionin derisa fitimi NETO të arrijë $1, $2, $3+,
+        # pastaj e kap si dollar të plotë — kurrë me centa (p.sh. JO $1.04).
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        if pnl_usd < 1.0:
+        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE   # tarifat hyrje+dalje
+        net_usd = pnl_usd - fees_est
+        if net_usd < 1.0:
             return None            # mban — fitimi nën $1 nuk kapet kurrë
         for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if pnl_usd >= rung:
-                return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
-                        f"(shkalla ${rung:g}) — kapur")
+            if net_usd >= rung:
+                return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
         klines = ctx.candles.get(pos["symbol"])
         if not klines or len(klines) < 30:
             return None
@@ -976,45 +984,54 @@ class TrackerAgent(Agent):
         last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
             if len(closes) >= 3 else 0
 
-        # treguesit kapin VETËM me fitim >= $1 (që u kontrollua më lart)
+        # treguesit kapin VETËM me fitim neto >= $1 — gjithmonë dollar i plotë
+        bank = float(int(net_usd))          # p.sh. $1.37 → kapet si $1 (pa centa)
         if side == "LONG":
             if r > 68:
-                return "smart: RSI i mbingarkuar — +$1+ kapur"
+                return ("smart: RSI i mbingarkuar — fitim i arsyeshëm", bank)
             if e9 < e21:
-                return "smart: trendi u kthye poshtë — +$1+ kapur"
+                return ("smart: trendi u kthye poshtë — fitim i arsyeshëm", bank)
             if last2 < 0 and mom < 0:
-                return "smart: momentum i dobësuar — +$1+ kapur"
+                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
         else:
             if r < 32:
-                return "smart: RSI i mbishitur — +$1+ kapur"
+                return ("smart: RSI i mbishitur — fitim i arsyeshëm", bank)
             if e9 > e21:
-                return "smart: trendi u kthye lart — +$1+ kapur"
+                return ("smart: trendi u kthye lart — fitim i arsyeshëm", bank)
             if last2 > 0 and mom > 0:
-                return "smart: momentum i dobësuar — +$1+ kapur"
+                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
         return None
 
     def _trail_profit(self, e, pos, price):
-        """Trailing + shkalla në $: SL lëviz për të kyçur $0.5/$1/$2/$3
-        sapo arrihen — fitimi i arsyeshëm mbrohet gjithmonë."""
+        """Trailing + shkalla në $: SL lëviz për të kyçur $1/$2/$3/$4/$5
+        sapo arrihen NETO (pas tarifave) — fitimi i arsyeshëm mbrohet gjithmonë,
+        gjithmonë në dollarë të plotë (kurrë centa)."""
         side = pos["side"]
         qty = pos["qty"] or 1
         pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
             if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        if pnl_usd < 1.0:
+        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE
+        net_usd = pnl_usd - fees_est
+        if net_usd < 1.0:
             return
-        # SL që kyç shkallën më të lartë të arritur (min $1)
+        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë)
         locked = 0.0
         for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if pnl_usd >= rung:
+            if net_usd >= rung:
                 locked = rung
                 break
+        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë).
+        # Çmimi i SL llogaritet që fitimi NETO (pas tarifave) = saktësisht
+        # shkalla — kështu edhe kur SL e prek, kapet $1.00 / $2.00, kurrë centa.
         if side == "LONG":
-            new_sl = pos["entry"] + locked / qty
+            new_sl = (locked + pos["entry"] * qty * (1 + FEE_RATE)) \
+                / (qty * (1 - FEE_RATE))
             if new_sl > pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
         else:
-            new_sl = pos["entry"] - locked / qty
+            new_sl = (pos["entry"] * qty * (1 - FEE_RATE) - locked) \
+                / (qty * (1 + FEE_RATE))
             if new_sl < pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
 
@@ -1031,8 +1048,16 @@ class TrackerAgent(Agent):
                 new_sl = pos["entry"] * 0.9995
                 if new_sl < pos["sl"]:
                     e._update_sl(pos["id"], new_sl)
-        if hit_tp or hit_sl:
-            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
+        if hit_tp:
+            # 💵 edhe TP (rrjet sigurie) kapet si dollar i plotë — kurrë centa
+            pnl_usd = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
+                else (pos["entry"] - price) * pos["qty"]
+            fees = (pos["entry"] + price) * pos["qty"] * FEE_RATE
+            net = pnl_usd - fees
+            banked = float(max(1, int(net))) if net > 0 else None
+            await e._close_trade(pos, price, "tp", banked=banked)
+        elif hit_sl:
+            await e._close_trade(pos, price, "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]

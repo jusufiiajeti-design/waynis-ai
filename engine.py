@@ -904,11 +904,16 @@ class PaperEngine:
         with self._conn() as c:
             c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
 
-    async def _close_trade(self, pos, price, reason):
+    async def _close_trade(self, pos, price, reason, banked=None):
         """Close a PAPER position (with real fees simulated).
         If TP1 already banked half the profit, the trade's total PnL shown
         in the ledger = runner PnL + partial PnL (balance credits only the
-        runner part — the partial was already credited at TP1)."""
+        runner part — the partial was already credited at TP1).
+
+        💵 `banked` = dollarë të plotë ($1, $2, $3...) që agjenti kyçi —
+        fitimi regjistrohet si dollar i plotë, KURRË me centa (p.sh. JO $1.04).
+        `min(pnl, banked)` garanton që kurrë nuk regjistrohet më shumë se
+        fitimi real (neto) i pozicionit."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -916,6 +921,8 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
+        if banked is not None:
+            pnl = round(min(pnl, banked), 2)     # 💵 dollar i plotë, kurrë centa
         partial = pos.get("partial_pnl") or 0.0
         total_pnl = pnl + partial
         status = "win" if total_pnl > 0 else "loss"
@@ -928,12 +935,25 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        if reason.startswith("smart:"):
+            label = "Smart"
+        elif reason == "tp":
+            label = "TP"
+        elif reason == "sl":
+            label = "SL"
+        else:
+            label = "exit"
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
-                    f"(tarifa ${fees:.2f})",
+                    f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
+                    f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    @staticmethod
+    def _fmt_usd(x):
+        """Formaton dollarët: $1 → '1', $1.37 → '1.37' (fitimet e kyçura
+        janë gjithmonë dollarë të plotë, kështu dalin pa centa)."""
+        return f"{x:g}" if abs(x - round(x)) < 1e-9 else f"{x:.2f}"
 
     # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)
