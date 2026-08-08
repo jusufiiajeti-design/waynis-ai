@@ -2373,6 +2373,10 @@ class ConsensusAgent(Agent):
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
         rms = self._relative_strength(ctx)                # "arbitrage" across symbols
         open_syms = {p["symbol"] for p in e.open_positions()}
+        # 🔀 grid balance: count open LONG vs SHORT — favour the rarer side
+        open_pos = e.open_positions()
+        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
+        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
         candidates = []
 
         for sym, votes in ctx.votes.items():
@@ -2395,6 +2399,16 @@ class ConsensusAgent(Agent):
                 direction = "SHORT"
             else:
                 continue
+            # grid balance boost: if one side dominates, boost the other
+            if e.mode != "real":
+                if direction == "SHORT" and n_long > n_short:
+                    score = min(score * 1.0 + 0.05, 1.0)
+                elif direction == "LONG" and n_short > n_long:
+                    score = max(score - 0.05, -1.0)
+                if direction == "SHORT" and n_long - n_short >= 4:
+                    score = min(score + 0.05, 1.0)
+                elif direction == "LONG" and n_short - n_long >= 4:
+                    score = max(score - 0.05, -1.0)
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
             if len(supporting) < 2:              # duhen ≥2 strategji bashkë
