@@ -453,6 +453,15 @@
         <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
         <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
       </div>
+      <div class="set" style="margin-top:2px">
+        <div><div class="l">💥 Forca e komponimit</div><div class="d">×1 normal · ×2 = pozicione dyfish më të mëdha (fitime 2×, por edhe humbje 2×)</div></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="cmSel" class="sel" style="max-width:90px" onchange="saveCompoundMult()">
+            <option value="1">×1</option>
+            <option value="2">×2</option>
+          </select>
+        </div>
+      </div>
       <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
         <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
         <div class="switch on" id="swLock" onclick="toggleLock()"></div>
@@ -770,6 +779,7 @@ function renderStatus(){
   const sw=$("swCompound");
   sw.classList.toggle("on", !!S.status.compound);
   $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
+  const cm=$("cmSel"); if(cm) cm.value = String(S.status.compound_mult||1);
   const g=a.growth||1;
   const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
   // mode state (paper / real)
@@ -1327,6 +1337,15 @@ async function toggleCompound(){
     toast(on?"Komponimi AKTIV — fitimet ri-investohen":"Komponimi OFF — madhësi fikse pozicionesh");
     refreshEquity();
   }catch(e){ sw.classList.toggle("on"); }
+}
+async function saveCompoundMult(){
+  const v=parseFloat($("cmSel").value)||1;
+  try{
+    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({compound_mult:v})});
+    S.status.compound_mult=d.compound_mult;
+    toast(v>=2?"💥 Komponimi ×2 — pozicione dyfish (rrezik dyfish)":"Komponimi ×1 normal");
+    refreshStatus();
+  }catch(e){ toast("Gabim"); }
 }
 async function toggleLock(){
   const sw=$("swLock"); sw.classList.toggle("on");

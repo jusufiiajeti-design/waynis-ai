@@ -529,12 +529,13 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
+        mult = getattr(e, "compound_mult", 1.0)   # ×1 normal, ×2 agresiv
         if e.mode == "real":
             bal = e.real_balance()
-            notional = bal * REAL_MAX_NOTIONAL_PCT
+            notional = bal * REAL_MAX_NOTIONAL_PCT * mult
             ctx.qty = notional / entry if entry else 0
             self.report(f"💰 REAL {ctx.qty:.6f} @ {entry:.6g} (~${notional:.2f}, "
-                        f"maks {REAL_MAX_NOTIONAL_PCT*100:.0f}% e balancës)",
+                        f"maks {REAL_MAX_NOTIONAL_PCT*100*mult:.0f}% e balancës, ×{mult:g})",
                         sig["symbol"], sig["direction"], sig["confidence"])
             return
 
@@ -547,12 +548,14 @@ class SizerAgent(Agent):
             sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
                 else entry * (1 + STOP_LOSS)
         stop_dist = abs(entry - sl)
-        risk_amount = base * TRADE_RISK
+        risk_amount = base * TRADE_RISK * mult
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
-        if qty * entry > equity * 0.35:
-            qty = equity * 0.35 / entry
+        max_pct = min(0.35 * mult, 0.6)          # 35% ×1 → 60% ×2 (cap)
+        if qty * entry > equity * max_pct:
+            qty = equity * max_pct / entry
         ctx.qty = qty
-        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} ({mode})",
+        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} "
+                    f"({mode}, ×{mult:g}, deri {max_pct*100:.0f}%)",
                     sig["symbol"], sig["direction"], sig["confidence"])
 
 

@@ -27,6 +27,7 @@ PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
+COMPOUND_MULT_MAX = 2.0         # max compound multiplier (×1 default, ×2 user)
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
@@ -1923,12 +1924,13 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
+        mult = getattr(e, "compound_mult", 1.0)   # ×1 normal, ×2 agresiv
         if e.mode == "real":
             bal = e.real_balance()
-            notional = bal * REAL_MAX_NOTIONAL_PCT
+            notional = bal * REAL_MAX_NOTIONAL_PCT * mult
             ctx.qty = notional / entry if entry else 0
             self.report(f"💰 REAL {ctx.qty:.6f} @ {entry:.6g} (~${notional:.2f}, "
-                        f"maks {REAL_MAX_NOTIONAL_PCT*100:.0f}% e balancës)",
+                        f"maks {REAL_MAX_NOTIONAL_PCT*100*mult:.0f}% e balancës, ×{mult:g})",
                         sig["symbol"], sig["direction"], sig["confidence"])
             return
 
@@ -1941,12 +1943,14 @@ class SizerAgent(Agent):
             sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
                 else entry * (1 + STOP_LOSS)
         stop_dist = abs(entry - sl)
-        risk_amount = base * TRADE_RISK
+        risk_amount = base * TRADE_RISK * mult
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
-        if qty * entry > equity * 0.35:
-            qty = equity * 0.35 / entry
+        max_pct = min(0.35 * mult, 0.6)          # 35% ×1 → 60% ×2 (cap)
+        if qty * entry > equity * max_pct:
+            qty = equity * max_pct / entry
         ctx.qty = qty
-        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} ({mode})",
+        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} "
+                    f"({mode}, ×{mult:g}, deri {max_pct*100:.0f}%)",
                     sig["symbol"], sig["direction"], sig["confidence"])
 
 
@@ -2235,6 +2239,7 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        self.compound_mult = float(settings.get("compound_mult", 1.0))  # ×1..×2
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -2388,6 +2393,16 @@ class PaperEngine:
                 val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
+
+    def set_compound_mult(self, mult):
+        self.compound_mult = max(1.0, min(COMPOUND_MULT_MAX, float(mult)))
+        s = _load_settings()
+        s["compound_mult"] = self.compound_mult
+        _save_settings(s)
+        self._event("settings",
+                    f"💥 Komponimi ×{self.compound_mult:g} — "
+                    f"pozicionet {'dyfishohen' if self.compound_mult >= 2 else 'normale'}")
+        return self.compound_mult
 
     # ------------------------------------------------------------------
     # 🔒 Equity profit lock
@@ -3283,6 +3298,7 @@ async def status():
         "cycle_seconds": CYCLE_SECONDS,
         "auto_trade": engine.auto_trade,
         "compound": engine.compound,
+        "compound_mult": engine.compound_mult,
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
@@ -3379,6 +3395,9 @@ async def set_settings(body: dict):
         return {"ok": True, "mode": new_mode,
                 "auto_trade": engine.auto_trade,
                 "compound": engine.compound}
+    if "compound_mult" in body:
+        mult = engine.set_compound_mult(body["compound_mult"])
+        return {"ok": True, "compound_mult": mult}
     if "equity_lock_enabled" in body or "equity_lock_pct" in body:
         info = engine.set_equity_lock(
             enabled=body.get("equity_lock_enabled"),

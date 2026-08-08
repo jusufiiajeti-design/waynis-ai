@@ -26,6 +26,7 @@ PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
+COMPOUND_MULT_MAX = 2.0         # max compound multiplier (×1 default, ×2 user)
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than

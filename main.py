@@ -232,6 +232,7 @@ async def status():
         "cycle_seconds": CYCLE_SECONDS,
         "auto_trade": engine.auto_trade,
         "compound": engine.compound,
+        "compound_mult": engine.compound_mult,
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
@@ -328,6 +329,9 @@ async def set_settings(body: dict):
         return {"ok": True, "mode": new_mode,
                 "auto_trade": engine.auto_trade,
                 "compound": engine.compound}
+    if "compound_mult" in body:
+        mult = engine.set_compound_mult(body["compound_mult"])
+        return {"ok": True, "compound_mult": mult}
     if "equity_lock_enabled" in body or "equity_lock_pct" in body:
         info = engine.set_equity_lock(
             enabled=body.get("equity_lock_enabled"),

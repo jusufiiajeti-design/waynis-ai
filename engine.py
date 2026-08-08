@@ -28,7 +28,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN,
-                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
+                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL,
+                    COMPOUND_MULT_MAX)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -90,6 +91,7 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        self.compound_mult = float(settings.get("compound_mult", 1.0))  # ×1..×2
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -243,6 +245,16 @@ class PaperEngine:
                 val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
+
+    def set_compound_mult(self, mult):
+        self.compound_mult = max(1.0, min(COMPOUND_MULT_MAX, float(mult)))
+        s = _load_settings()
+        s["compound_mult"] = self.compound_mult
+        _save_settings(s)
+        self._event("settings",
+                    f"💥 Komponimi ×{self.compound_mult:g} — "
+                    f"pozicionet {'dyfishohen' if self.compound_mult >= 2 else 'normale'}")
+        return self.compound_mult
 
     # ------------------------------------------------------------------
     # 🔒 Equity profit lock
