@@ -3,14 +3,16 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
-SCAN_BATCH = 30                 # symbols scanned per cycle (all watchlist)
+SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
+TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — lëvizje më të mëdha = fitime më të mëdha
+KLINES_TTL = 8.0                # cache klines më gjatë (5m qirinj) — cikle më të shpejta
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
 TAKE_PROFIT = 0.0035            # +0.35 % (më afër → kapet më shpejt, më shumë fitore)
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
 MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
-COOLDOWN_SEC = 45               # cooldown per symbol after a close (was 300s → much faster re-entry)
+COOLDOWN_SEC = 20               # cooldown pas mbylljes — më shumë tregti për $60/ditë
 MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
 TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 
@@ -2255,11 +2257,11 @@ class ScannerAgent(Agent):
         scanned = []
         for sym in batch:
             # use cache when fresh — skips the network call → much faster cycles
-            klines = e.get_klines_cached(sym, "1m", 60, ttl=4.0)
+            klines = e.get_klines_cached(sym, TRADE_TF, 60, ttl=KLINES_TTL)
             if klines is None:
-                klines = await ctx.market.fetch_klines(sym, "1m", 60)
+                klines = await ctx.market.fetch_klines(sym, TRADE_TF, 60)
                 if len(klines) >= 30:
-                    e.klines_cache[(sym, "1m")] = (time.time(), klines)
+                    e.klines_cache[(sym, TRADE_TF)] = (time.time(), klines)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
@@ -3079,8 +3081,9 @@ class TrackerAgent(Agent):
         if pnl_pct < 0.05:
             return None
         # 💵 dollar ladder — fitimi në $ është kriteri kryesor
+        # (5m kornizë: kap $0.5 shpejt, pastaj $1/$2 kur lëvizja vazhdon)
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        for rung in (3.0, 2.0, 1.0, 0.5):
+        for rung in (2.0, 1.0, 0.5):
             if pnl_usd >= rung:
                 return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
                         f"(shkalla ${rung:g}) — kapur")
@@ -3131,7 +3134,7 @@ class TrackerAgent(Agent):
             return
         # SL që kyç shkallën më të lartë të arritur
         locked = 0.0
-        for rung in (3.0, 2.0, 1.0, 0.5):
+        for rung in (2.0, 1.0, 0.5):
             if pnl_usd >= rung:
                 locked = rung
                 break

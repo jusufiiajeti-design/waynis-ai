@@ -37,7 +37,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -132,11 +132,11 @@ class ScannerAgent(Agent):
         scanned = []
         for sym in batch:
             # use cache when fresh — skips the network call → much faster cycles
-            klines = e.get_klines_cached(sym, "1m", 60, ttl=4.0)
+            klines = e.get_klines_cached(sym, TRADE_TF, 60, ttl=KLINES_TTL)
             if klines is None:
-                klines = await ctx.market.fetch_klines(sym, "1m", 60)
+                klines = await ctx.market.fetch_klines(sym, TRADE_TF, 60)
                 if len(klines) >= 30:
-                    e.klines_cache[(sym, "1m")] = (time.time(), klines)
+                    e.klines_cache[(sym, TRADE_TF)] = (time.time(), klines)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
@@ -956,8 +956,9 @@ class TrackerAgent(Agent):
         if pnl_pct < 0.05:
             return None
         # 💵 dollar ladder — fitimi në $ është kriteri kryesor
+        # (5m kornizë: kap $0.5 shpejt, pastaj $1/$2 kur lëvizja vazhdon)
         pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        for rung in (3.0, 2.0, 1.0, 0.5):
+        for rung in (2.0, 1.0, 0.5):
             if pnl_usd >= rung:
                 return (f"smart: +${pnl_usd:.2f} fitim i arsyeshëm "
                         f"(shkalla ${rung:g}) — kapur")
@@ -1008,7 +1009,7 @@ class TrackerAgent(Agent):
             return
         # SL që kyç shkallën më të lartë të arritur
         locked = 0.0
-        for rung in (3.0, 2.0, 1.0, 0.5):
+        for rung in (2.0, 1.0, 0.5):
             if pnl_usd >= rung:
                 locked = rung
                 break
