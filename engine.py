@@ -29,7 +29,10 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL,
-                    COMPOUND_MULT_MAX)
+                    COMPOUND_MULT_MAX,
+                    RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
+                    RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
+                    RISK_RESUME_MIN)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -92,6 +95,11 @@ class PaperEngine:
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
         self.compound_mult = float(settings.get("compound_mult", 1.0))  # ×1..×2
+        # 🛡️ adaptive risk state (protects against ×2 losses)
+        self.risk_pause_until = 0.0
+        self.risk_state = {"mode": "normal", "mult": self.compound_mult,
+                           "pause_until": 0.0, "last_check": 0.0,
+                           "wr": None, "net": None}
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -251,10 +259,96 @@ class PaperEngine:
         s = _load_settings()
         s["compound_mult"] = self.compound_mult
         _save_settings(s)
+        self.risk_state["mult"] = self.compound_mult
         self._event("settings",
                     f"💥 Komponimi ×{self.compound_mult:g} — "
                     f"pozicionet {'dyfishohen' if self.compound_mult >= 2 else 'normale'}")
         return self.compound_mult
+
+    # ------------------------------------------------------------------
+    # 🛡️ Adaptive risk — protects against ×2 losses
+    # ------------------------------------------------------------------
+    def effective_mult(self):
+        """The multiplier actually used by the Sizer. The risk manager can
+        temporarily reduce ×2 → ×1 when the bot is losing, so losses never
+        actually run at ×2 while we're in a bad patch."""
+        if self.is_risk_paused():
+            return 1.0
+        return self.risk_state.get("mult", self.compound_mult)
+
+    def is_risk_paused(self):
+        return time.time() < self.risk_pause_until
+
+    def risk_info(self):
+        s = self.risk_state
+        return {
+            "adaptive": RISK_ADAPTIVE_ENABLED,
+            "mode": s.get("mode"),
+            "mult": s.get("mult"),
+            "effective_mult": self.effective_mult(),
+            "user_mult": self.compound_mult,
+            "paused": self.is_risk_paused(),
+            "pause_until": s.get("pause_until", 0.0),
+            "wr": s.get("wr"),
+            "net": s.get("net"),
+        }
+
+    def recent_closed(self, n=RISK_LOOKBACK):
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT pnl, status FROM trades WHERE status!='open' "
+                "ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+        return [(p or 0.0, st) for p, st in rows][::-1]
+
+    def risk_manager_tick(self):
+        """Called each cycle: evaluate recent performance and adjust risk.
+        Returns True if trading should be paused (new entries blocked)."""
+        if not RISK_ADAPTIVE_ENABLED:
+            return False
+        now = time.time()
+        # cooldown between checks
+        if now - self.risk_state.get("last_check", 0) < RISK_RESUME_MIN * 60:
+            return self.is_risk_paused()
+
+        recent = self.recent_closed()
+        if len(recent) < 4:
+            return False
+        wins = sum(1 for _, st in recent if st == "win")
+        wr = wins / len(recent)
+        net = sum(p for p, _ in recent)
+        self.risk_state["wr"] = round(wr * 100, 1)
+        self.risk_state["net"] = round(net, 2)
+        self.risk_state["last_check"] = now
+
+        # losing → de-risk (reduce ×2 to ×1) and/or pause
+        if wr < RISK_BAD_WR or net < RISK_BAD_NET:
+            if self.compound_mult >= 2:
+                self.risk_state["mult"] = RISK_DELEVERAGE_TO
+                self.risk_state["mode"] = "de-risk"
+                self._event(
+                    "risk",
+                    f"🛡️ Risk Manager: humbje në {len(recent)} tregtitë e fundit "
+                    f"(WR {wr*100:.0f}%, net ${net:+.2f}) → komponimi u ul "
+                    f"në ×{RISK_DELEVERAGE_TO:g} për t'u mbrojtur")
+            self.risk_pause_until = now + RISK_PAUSE_MIN * 60
+            self.risk_state["pause_until"] = self.risk_pause_until
+            self.risk_state["mode"] = "pause"
+            self._event(
+                "risk",
+                f"🛡️ Risk Manager: push {RISK_PAUSE_MIN} min — ndal tregtitë e reja "
+                f"derisa tregu të stabilizohet (WR {wr*100:.0f}%, net ${net:+.2f})")
+            return True
+
+        # performing well → restore the user's multiplier
+        if self.risk_state.get("mult", 1.0) < self.compound_mult:
+            self.risk_state["mult"] = self.compound_mult
+            self.risk_state["mode"] = "normal"
+            self._event("risk",
+                        f"🛡️ Risk Manager: performancë e mirë (WR {wr*100:.0f}%) "
+                        f"→ komponimi u kthye në ×{self.compound_mult:g}")
+        else:
+            self.risk_state["mode"] = "normal"
+        return False
 
     # ------------------------------------------------------------------
     # 🔒 Equity profit lock
@@ -668,6 +762,11 @@ class PaperEngine:
         # 📈 DCA periodic buy
         try:
             await self.dca_check()
+        except Exception:
+            pass
+        # 🛡️ adaptive risk check (protect against ×2 losses)
+        try:
+            self.risk_manager_tick()
         except Exception:
             pass
         ctx = CycleContext(self, self.market, idx)

@@ -388,6 +388,14 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
+        if e.is_risk_paused():
+            mins = int((e.risk_pause_until - time.time()) // 60) + 1
+            self.report(f"🛡️ Risk Manager: push {mins} min — "
+                        f"ndalim nga humbjet (WR {e.risk_state.get('wr')}%)",
+                        best["symbol"], best["direction"], best["confidence"])
+            ctx.stop = True
+            return
+
         if e.mode == "real":
             if not e.exchange.configured:
                 self.report("💰 REAL: çelësat s'janë konfiguruar "
@@ -499,17 +507,30 @@ class RiskManagerAgent(Agent):
                         ctx.chosen["confidence"])
             ctx.stop = True
             return
+        # adaptive risk status (protects ×2 against losses)
+        ri = e.risk_info()
+        risk_note = ""
+        if ri.get("paused"):
+            mins = int((e.risk_pause_until - time.time()) // 60) + 1
+            risk_note = f" 🛡️ push {mins} min (WR {ri.get('wr')}%)"
+        elif ri.get("effective_mult", 1.0) < ri.get("user_mult", 1.0):
+            risk_note = (f" 🛡️ mbrojtje: ×{ri.get('user_mult')} → "
+                         f"×{ri.get('effective_mult')} (WR {ri.get('wr')}%)")
+        elif ri.get("effective_mult", 1.0) >= 2:
+            risk_note = " 🛡️ ×2 aktiv — Risk Manager në vëzhgim"
+
         if e.mode == "real":
             bal = e.real_balance()
             notional = ctx.qty * ctx.chosen.get("entry", 0)
             if notional > bal * REAL_MAX_NOTIONAL_PCT:
                 ctx.qty = bal * REAL_MAX_NOTIONAL_PCT / ctx.chosen.get("entry", 1)
             self.report(f"💰 Risk: balanca ${bal:.2f}, ekspozim ≤ "
-                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%",
+                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%{risk_note}",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
         else:
-            self.report("Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%",
+            self.report(f"Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%"
+                        f"{risk_note}",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
 
@@ -529,7 +550,7 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
-        mult = getattr(e, "compound_mult", 1.0)   # ×1 normal, ×2 agresiv
+        mult = e.effective_mult()                  # ×2 normal, ×1 kur risk aktiv
         if e.mode == "real":
             bal = e.real_balance()
             notional = bal * REAL_MAX_NOTIONAL_PCT * mult

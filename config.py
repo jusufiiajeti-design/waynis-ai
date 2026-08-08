@@ -28,6 +28,16 @@ RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
 COMPOUND_MULT_MAX = 2.0         # max compound multiplier (×1 default, ×2 user)
 
+# ---- 🛡️ adaptive risk (protects against ×2 losses) ----
+RISK_ADAPTIVE_ENABLED = True    # risk manager watches recent performance
+RISK_LOOKBACK = 10              # last N closed trades evaluated
+RISK_BAD_WR = 0.45              # if win rate below this → de-risk
+RISK_BAD_NET = 0.0              # if net pnl over lookback below this → de-risk
+RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
+RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
+RISK_RESUME_MIN = 3             # re-evaluate after N minutes
+
+
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
 # EQUITY_LOCK_PCT from that peak — when triggered, ALL positions close

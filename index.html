@@ -329,6 +329,8 @@
       <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
+      <div id="riskBadge" style="display:none;margin:6px 0 4px;padding:8px 10px;border-radius:10px;
+        font-size:11.5px;font-weight:600;line-height:1.5"></div>
       <div class="conf-bar"><div class="conf-fill" id="confFill" style="width:0%"></div></div>
       <div class="ai-box" id="aiBox" onclick="toggleAiDetail()">
         <div class="ai-head">
@@ -812,6 +814,28 @@ function renderStatus(){
   const lkEl=$("lockState");
   if(lk.locked){ lkEl.textContent="🔒 AKTIV — push"; lkEl.style.color="var(--amber)"; }
   else { lkEl.textContent = lk.enabled?"Gati (mbrojtje aktive)":"OFF"; lkEl.style.color=""; }
+  // 🛡️ adaptive risk badge
+  const rk = S.status.risk||{};
+  const rb=$("riskBadge");
+  if(rk.paused){
+    rb.style.display="block";
+    rb.style.background="rgba(239,68,68,.15)";
+    rb.style.border="1px solid rgba(239,68,68,.5)";
+    rb.style.color="#fca5a5";
+    rb.textContent=`🛡️ RISK MANAGER: PUSH — humbje të zbuluara (WR ${rk.wr??"—"}%) · push derisa tregu të stabilizohet`;
+  } else if(rk.effective_mult && rk.user_mult && rk.effective_mult < rk.user_mult){
+    rb.style.display="block";
+    rb.style.background="rgba(251,191,36,.12)";
+    rb.style.border="1px solid rgba(251,191,36,.5)";
+    rb.style.color="var(--amber)";
+    rb.textContent=`🛡️ Mbrojtja aktive: ×${rk.user_mult} → ×${rk.effective_mult} (WR ${rk.wr??"—"}%) — fitimet mbrohen nga ×2`;
+  } else if(rk.effective_mult && rk.effective_mult>=2){
+    rb.style.display="block";
+    rb.style.background="rgba(34,197,94,.1)";
+    rb.style.border="1px solid rgba(34,197,94,.4)";
+    rb.style.color="var(--green)";
+    rb.textContent=`🛡️ Risk Manager në vëzhgim · ×2 aktiv — do të ulë në ×1 nëse humbjet fillojnë`;
+  } else { rb.style.display="none"; }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
   renderAgentsGrid(S.status.agents);
@@ -1217,6 +1241,7 @@ function renderEvents(){
       : ev.type==="close"?'<span class="badge b-win">EXIT</span>'
       : ev.type==="ai"?'<span class="badge bl">AI</span>'
       : ev.type==="lock"?'<span class="badge" style="background:rgba(251,191,36,.15);color:var(--amber)">🔒 LOCK</span>'
+      : ev.type==="risk"?'<span class="badge" style="background:rgba(239,68,68,.15);color:var(--red)">🛡️ RISK</span>'
       : ev.type==="seed"||ev.type==="reset"||ev.type==="settings"?'<span class="badge">SYS</span>'
       : '<span class="badge">INFO</span>';
     return `<div class="ev"><span class="t">${fmtTime(ev.ts)}</span><span class="m">${dot} ${ev.msg}</span></div>`;

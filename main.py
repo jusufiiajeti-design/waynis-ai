@@ -237,6 +237,7 @@ async def status():
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
+        "risk": engine.risk_info(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
