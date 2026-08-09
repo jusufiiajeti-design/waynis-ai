@@ -3556,7 +3556,8 @@ from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
 from strategies import generate_variant_strategies
 from turso import (query as turso_query, exec_sql as turso_exec,
-                   batch_exec as turso_batch, enabled as turso_enabled)
+                   batch_exec as turso_batch, enabled as turso_enabled,
+                   _creds as _turso_creds)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -3742,23 +3743,31 @@ class PaperEngine:
                     except Exception:
                         pass
             row = c.execute("SELECT * FROM account WHERE id=1").fetchone()
+            pending = []
             if not row:
                 c.execute(
                     "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?)",
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
                 self._turso_ensure_schema()
-                if not self._turso_restore(c):
+                if not self._turso_restore(c, pending):
                     # nuk ka histori në Turso → demo fikse (për herë të parë)
                     self._seed_history(c)
                     self._seed_equity(c)
                     if turso_enabled():
-                        self._event("sync",
-                                    "☁️ Turso i lidhur — fitimet e vërteta "
-                                    "tani ruhen përgjithmonë në cloud")
+                        pending.append(
+                            ("sync",
+                             "☁️ Turso i lidhur — fitimet e vërteta tani "
+                             "ruhen përgjithmonë në cloud"))
+        # 🔒 ngjarjet emetohen PAS mbylljes së transaksionit — një lidhje
+        # e dytë e hapur brenda "with" shkakton "database is locked" në Render
+        for etype, msg in pending:
+            self._event(etype, msg)
 
     def _conn(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        return sqlite3.connect(DB_PATH)
+        # timeout: pret deri 15s nëse një lidhje tjetër e mban skedarin
+        # (parandalon "database is locked" në Render/Python 3.11)
+        return sqlite3.connect(DB_PATH, timeout=15)
 
     # ------------------------------------------------------------------
     # ☁️ Turso — ruajtja përgjithmonë (databazë falas në internet)
@@ -3780,9 +3789,11 @@ class PaperEngine:
             "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY "
             "AUTOINCREMENT, ts TEXT, type TEXT, msg TEXT, symbol TEXT)")
 
-    def _turso_restore(self, c):
+    def _turso_restore(self, c, pending=None):
         """Nëse lokalja u fshi (rindezje Render), rikthe historinë e
-        vërtetë nga Turso. Kthen True nëse u rikthye diçka."""
+        vërtetë nga Turso. Kthen True nëse u rikthye diçka.
+        `pending` = listë ku shtohen ngjarjet që do të emetohen PAS
+        transaksionit (shmang "database is locked")."""
         if not turso_enabled():
             return False
         rows = turso_query(
@@ -3815,9 +3826,14 @@ class PaperEngine:
                 (bal if bal is not None else STARTING_BALANCE,
                  peak if peak is not None else STARTING_BALANCE,
                  started or now_iso()))
-        self._event("sync",
-                    f"☁️ Historia u rikthye nga Turso ({len(rows)} tregti) — "
-                    f"asgjë nuk humbi")
+        if pending is not None:
+            pending.append(("sync",
+                            f"☁️ Historia u rikthye nga Turso "
+                            f"({len(rows)} tregti) — asgjë nuk humbi"))
+        else:
+            self._event("sync",
+                        f"☁️ Historia u rikthye nga Turso "
+                        f"({len(rows)} tregti) — asgjë nuk humbi")
         return True
 
     def turso_status(self):
@@ -3833,7 +3849,7 @@ class PaperEngine:
                     "debug": {"file_found": file_ok, "env_url": env_url,
                               "env_token": env_tok, "base": base}}
         try:
-            u, _ = turso._creds()
+            u, _ = _turso_creds()
             return {"enabled": True,
                     "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io",
                     "debug": {"file_found": file_ok, "env_url": env_url,
