@@ -29,6 +29,8 @@ app.add_middleware(
 
 market = MarketData()
 engine = PaperEngine(market)
+from spotgrid import SpotPyramid
+spot = SpotPyramid(market)
 
 clients = set()
 
@@ -39,8 +41,23 @@ clients = set()
 @app.on_event("startup")
 async def startup():
     app.state.task = asyncio.create_task(engine.run())
+    app.state.spot_task = asyncio.create_task(_spot_loop())
     # warm the ticker cache so the first page load is instant
     await asyncio.to_thread(_warmup)
+
+def _spot_event(etype, msg, symbol=None):
+    try:
+        engine._event(etype, msg, symbol)
+    except Exception:
+        pass
+
+async def _spot_loop():
+    while True:
+        try:
+            await spot.cycle(event=_spot_event)
+        except Exception:
+            pass
+        await asyncio.sleep(25)
 
 def _warmup():
     import urllib.request
@@ -283,6 +300,10 @@ async def equity(limit: int = 400):
 async def trades(limit: int = 60):
     return {"trades": engine.trades(limit)}
 
+
+@app.get("/api/spot")
+async def api_spot():
+    return spot.summary()
 
 @app.get("/api/events")
 async def events(limit: int = 40):

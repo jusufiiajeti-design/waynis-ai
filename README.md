@@ -97,6 +97,17 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
+## 🪜 Spot Pyramiding (strategjia universale EMA+RSI+volume)
+
+Sistem i veçantë brenda botit për **5 asete** (BTC, ETH, SOL, BNB, XRP) me
+**100€/aset** (demo: 108 USDT) sipas `STRATEGJIA-SPOT.md`:
+- **Filtri i trendit (4H):** çmimi > EMA200, EMA50 > EMA200, RSI > 50 → përndryshe NO TRADE
+- **Hyrja (1H):** mbi EMA20/50, RSI 55–68, volum ≥1.2×SMA20, breakout i swing-high
+- **Pyramiding 40/30/30** (max 3 hyrje, KURRË averaging-down)
+- **SL** poshtë swing-low (max 6%), pas BUY2 kurrë nën mesataren
+- **Dalje graduale:** +6% → 25%, +12% → 25%, pjesa → trailing 4%
+- Panel: tab-i **Spot** · API: `/api/spot` · Demo — asnjë fitim i garantuar
+
 ## 🎯 Synimi $60/ditë — çfarë u ndryshua (dhe çfarë është realiste)
 
 **Ndryshimet reale** (nuk ka numra të sajuar):
