@@ -511,15 +511,17 @@ async def real_status():
 
 @app.post("/api/reset")
 async def reset(seed: bool = False):
-    """Rivendos llogarinë nga e para (bilanci $10,000 pa asnjë tregti
-    të sajuar) dhe pastron edhe cloud-in (Turso)."""
+    """Rivendos llogarinë nga e para.
+    seed=true → mbjell demen e bukur (85%, Sot +52 — numra JO-realë, të
+    shënuar si demo). seed=false → $10,000 i pastër pa asnjë tregti."""
     engine.reset(seed=seed)
     # pastro edhe cloud-in që historia e vjetër të mos rikthehet
     try:
         engine._turso_push_snapshot()
     except Exception:
         pass
-    return {"ok": True, "balance": engine.account()["balance"]}
+    return {"ok": True, "balance": engine.account()["balance"],
+            "demo": bool(seed)}
 
 
 # ---------------------------------------------------------------------------
