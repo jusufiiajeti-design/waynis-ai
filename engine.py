@@ -308,15 +308,27 @@ class PaperEngine:
         return True
 
     def turso_status(self):
-        """Për panelin: a është lidhur ruajtja përgjithmonë?"""
+        """Për panelin: a është lidhur ruajtja përgjithmonë? (+ detaje diagnostike)"""
+        import os as _os
+        base = _os.path.dirname(_os.path.abspath(__file__))
+        jf = _os.path.join(base, "turso.json")
+        file_ok = _os.path.exists(jf)
+        env_url = bool(_os.environ.get("TURSO_URL", "").strip())
+        env_tok = bool(_os.environ.get("TURSO_TOKEN", "").strip())
         if not turso_enabled():
-            return {"enabled": False, "db": None}
+            return {"enabled": False, "db": None,
+                    "debug": {"file_found": file_ok, "env_url": env_url,
+                              "env_token": env_tok, "base": base}}
         try:
             u, _ = turso._creds()
             return {"enabled": True,
-                    "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io"}
+                    "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io",
+                    "debug": {"file_found": file_ok, "env_url": env_url,
+                              "env_token": env_tok}}
         except Exception:
-            return {"enabled": False, "db": None}
+            return {"enabled": False, "db": None,
+                    "debug": {"file_found": file_ok, "env_url": env_url,
+                              "env_token": env_tok}}
 
     def _turso_push_snapshot(self):
         """Shtyn historinë e vërtetë + balancën në Turso (një kërkesë).
