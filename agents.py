@@ -937,7 +937,7 @@ class TrackerAgent(Agent):
                 # ⏱️ TIME-STOP: pas MAX_HOLD_MIN minutash liro vendin —
                 # me fitim ≥$1 e mbyll me dollarin e plotë të kyçur,
                 # pa fitim e mbyll me humbje të vogël (qarkullim më i shpejtë)
-                self._time_stop(e, pos, price)
+                await self._time_stop(e, pos, price)
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
