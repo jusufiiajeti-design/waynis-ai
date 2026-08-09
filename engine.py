@@ -1005,8 +1005,11 @@ class PaperEngine:
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
                  json.dumps(votes or []), tp1))
-            self._turso_push_snapshot()      # ☁️ ruaj përgjithmonë
-            return cur.lastrowid
+            tid = cur.lastrowid
+        # ☁️ ruaj përgjithmonë (PAS komitimit — përndryshe push-i nuk
+        # e sheh tregtinë e re)
+        self._turso_push_snapshot()
+        return tid
 
     def _update_sl(self, trade_id, new_sl):
         with self._conn() as c:

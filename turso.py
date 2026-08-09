@@ -35,7 +35,9 @@ def _request(sql, args, want_rows):
     u, t = _creds()
     host = u.split("://", 1)[-1].rstrip("/")
     payload = {
-        "requests": [{"type": "execute", "stmt": {"sql": sql, "args": args or []}}],
+        "requests": [{"type": "execute",
+                      "stmt": {"sql": sql,
+                               "args": [_cell(a) for a in (args or [])]}}],
         "mode": "rows" if want_rows else "write",
     }
     req = urllib.request.Request(
@@ -53,6 +55,24 @@ def _val(cell):
     return cell
 
 
+def _cell(v):
+    """Kthen një vlerë Python në qelizën e etiketuar që kërkon API i Turso-s
+    (p.sh. "text" → {'type':'text','value':...}). Pa këtë, API kthen 400."""
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": "1" if v else "0"}
+    if isinstance(v, int):
+        # Turso (libsql HTTP) i kodon int64-t si vargje ("5", jo 5) — pa këtë
+        # kthen 400 "expected a borrowed string"
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, (bytes, bytearray)):
+        return {"type": "blob", "value": v.decode("utf-8", "replace")}
+    return {"type": "text", "value": str(v)}
+
+
 def query(sql, args=None):
     """Kthen lista rreshtash (tupla) ose [] nëse dështon/pa kredenciale."""
     if not enabled():
@@ -63,10 +83,15 @@ def query(sql, args=None):
         return []
     rows = []
     for res in out.get("results", []):
+        if res.get("type") != "ok":
+            continue
         rr = res.get("response", {}).get("result", {})
-        if rr.get("type") == "ok":
-            for row in rr.get("rows", []):
-                rows.append(tuple(_val(c) for c in row.get("row", [])))
+        for row in rr.get("rows", []):
+            # Turso kthen rreshta si lista qelizash; në disa versione
+            # si {'row': [...]} — i përballojmë të dyja
+            if isinstance(row, dict) and "row" in row:
+                row = row["row"]
+            rows.append(tuple(_val(c) for c in row))
     return rows
 
 
@@ -87,7 +112,8 @@ def batch_exec(items):
         return False
     u, t = _creds()
     host = u.split("://", 1)[-1].rstrip("/")
-    reqs = [{"type": "execute", "stmt": {"sql": s, "args": a or []}}
+    reqs = [{"type": "execute",
+             "stmt": {"sql": s, "args": [_cell(x) for x in (a or [])]}}
             for s, a in items]
     payload = {"requests": reqs, "mode": "write"}
     try:
