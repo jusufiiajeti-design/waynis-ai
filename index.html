@@ -857,9 +857,9 @@ function renderStatus(){
   // "Të kyçura" = fitimi i mbyllur (ruhet; ndryshon vetëm kur mbyllet një tregti)
   // "Në proces" = pozicionet e hapura (lëvizin me tregun çdo sekondë)
   const locked = st.realized || 0, openv = a.unrealized || 0;
-  const lk = $("lockVal"), ov = $("openVal");
-  lk.textContent = (locked>=0?"+":"")+fmt(locked)+" USDT"; lk.className = locked>=0?"up":"dn";
-  ov.textContent = (openv>=0?"+":"")+fmt(openv)+" USDT"; ov.className = openv>=0?"up":"dn";
+  const elLock = $("lockVal"), elOpen = $("openVal");
+  elLock.textContent = (locked>=0?"+":"")+fmt(locked)+" USDT"; elLock.className = locked>=0?"up":"dn";
+  elOpen.textContent = (openv>=0?"+":"")+fmt(openv)+" USDT"; elOpen.className = openv>=0?"up":"dn";
   const p=st.pnl_24h;
   const e=$("pnl24"); e.textContent = sign(p)+fmt(p)+" USDT"; e.className="v "+(p>=0?"up":"dn");
   $("winrate").textContent = fmt(st.win_rate,1)+"%";
