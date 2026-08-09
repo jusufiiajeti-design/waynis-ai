@@ -222,3 +222,6 @@ por asnjë para nuk investohet apo rrezikohet. Tregtimi i kriptomonedhave në
 tregjet reale mbart rrezik të lartë — mos investo para që s'mund t'i humbësh.
 Historiku i tregtive në fillim është **seed demo** (mund të fshihet me Reset).
 
+
+---
+> Deploy marker: cloud-storage-live · 2026-08-09
