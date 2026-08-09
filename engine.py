@@ -34,7 +34,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
                     RISK_RESUME_MIN,
                     FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
-                    ENSEMBLE_ENABLED, AGENT_TARGET)
+                    ENSEMBLE_ENABLED, AGENT_TARGET, MAX_PYRAMID)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -1107,6 +1107,35 @@ class PaperEngine:
                     f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
                     f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    async def _close_siblings(self, pos, price, reason):
+        """🪜 Mbyll shtesat (sibling-et) e të njëjtit simbol+anë — përdoret
+        kur SL i një pozicioni preket: i gjithë grupi del bashkë, si në
+        strategjinë spot pyramiding (s'lihen shtesat të humbin më tej)."""
+        try:
+            sibs = [p for p in self.open_positions()
+                    if p["symbol"] == pos["symbol"]
+                    and p["side"] == pos["side"]
+                    and p["id"] != pos["id"]]
+            for s in sibs:
+                await self._close_trade(s, price, reason)
+        except Exception:
+            pass
+
+    def pyramid_summary(self):
+        """Për panelin: sa grupe kanë shtesa piramidale."""
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, side, COUNT(*) FROM trades "
+                    "WHERE status='open' GROUP BY symbol, side").fetchall()
+        except Exception:
+            rows = []
+        groups = [{"symbol": s, "side": d, "entries": n}
+                  for s, d, n in rows if n > 1]
+        adds = sum(n - 1 for _, _, n in rows if n > 1)
+        return {"groups": len(groups), "adds": adds,
+                "max": MAX_PYRAMID, "active_groups": len(rows)}
 
     @staticmethod
     def _fmt_usd(x):
