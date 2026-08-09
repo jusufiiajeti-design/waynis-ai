@@ -10,9 +10,9 @@ TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 30                   # 30 pozicione njëkohësisht → më shumë tregti/ditë (30×$15=$450 rrezik, OK për $10k)
-COOLDOWN_SEC = 10               # cooldown 10s — rihap më shpejt pas mbylljes → më shumë tregti/ditë
-MAX_HOLD_MIN = 30               # time-stop: mbyll pozicionin pas 30 min — me shkallën e kyçur nëse ka fitim, me humbje të vogël nëse jo (liron vendet → më shumë tregti)
+MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
+COOLDOWN_SEC = 20               # cooldown pas mbylljes — më shumë tregti për $60/ditë
+MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
 TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 
 # ---- real money (spot, LONG-only) ----
@@ -39,27 +39,14 @@ RISK_LOOKBACK = 10              # last N closed trades evaluated
 RISK_BAD_WR = 0.45              # if win rate below this → de-risk
 RISK_BAD_NET = 0.0              # if net pnl over lookback below this → de-risk
 RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
-RISK_PAUSE_MIN = 1              # push vetëm 1 minutë pas humbjeve (kërkesa e përdoruesit)
+RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
-
-# ---- 🪜 SPOT PYRAMIDING (sistemi universal EMA+RSI+volume) ----
-SPOT_ENTRY_USD = 5.0         # hyrja për çdo shtesë në spot pyramiding:
-                             # $5 (përdoruesi: $3–$5). $45/aset → deri në 9 shtesa.
-
-# ---- 🪜 PYRAMIDING (i gjithë boti si spot pyramiding) ----
-# Boti shton pozicione në TË NJËJTIN simbol kur është në fitim (higher-high
-# për LONG / lower-low për SHORT), max 3 gjithsej, me madhësinë normale
-# ($15 ose ×komponim). KURRË averaging-down: shtohet vetëm në fitim.
-MAX_PYRAMID = 3                 # max pozicione për simbol (hyrja + 2 shtesa)
-PYRAMID_CONFIRM_PCT = 0.004     # kërkohet higher-high/lower-low 0.4% për shtesë
-PYRAMID_MIN_PROFIT_USD = 0.50   # shtohet VETËM kur grupi është në fitim ≥ $0.50
-PYRAMID_RSI_MAX = 78            # s'ngjyhet me RSI ekstrem (LONG <78 / SHORT >22)
 
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
 # Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
 # nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 10.0           # hyrja për tregti në USDT — $10 (kërkesa e përdoruesit)
+FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----

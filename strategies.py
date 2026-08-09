@@ -49,9 +49,7 @@ def rsi(closes, period=14):
         avg_g = (avg_g * (period - 1) + gains[i]) / period
         avg_l = (avg_l * (period - 1) + losses[i]) / period
     if avg_l == 0:
-        # pa humbje: nëse ka edhe fitime → 100 (i mbingarkuar),
-        # por nëse s'ka asnjë lëvizje → 50 (neutral, jo sinjal i rremë)
-        return 100.0 if avg_g > 0 else 50.0
+        return 100.0
     return 100.0 - 100.0 / (1.0 + avg_g / avg_l)
 
 

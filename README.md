@@ -97,60 +97,12 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
-## 🪜 Spot Pyramiding (strategjia universale EMA+RSI+volume)
-
-Sistem i veçantë brenda botit për **5 asete** (BTC, ETH, SOL, BNB, XRP) me
-**100€/aset** (demo: 108 USDT) sipas `STRATEGJIA-SPOT.md`:
-- **Filtri i trendit (4H):** çmimi > EMA200, EMA50 > EMA200, RSI > 50 → përndryshe NO TRADE
-- **Hyrja (1H):** mbi EMA20/50, RSI 55–68, volum ≥1.2×SMA20, breakout i swing-high
-- **Pyramiding 40/30/30** (max 3 hyrje, KURRË averaging-down)
-- **SL** poshtë swing-low (max 6%), pas BUY2 kurrë nën mesataren
-- **Dalje graduale:** +6% → 25%, +12% → 25%, pjesa → trailing 4%
-- Panel: tab-i **Spot** · API: `/api/spot` · Demo — asnjë fitim i garantuar
-
-## 🪜 Pyramiding në botin kryesor (i gjithë boti)
-
-I gjithë boti tani piramidon si sistemi spot, por me **hyrjen normale** ($15
-fiks ose ×komponim) dhe **të gjithë agjentët/strategjitë**:
-- Agjent i ri **🪜 Pyramid**: kur një pozicion është në **fitim ≥ $0.50** dhe
-  çmimi bën **higher-high** (LONG) / **lower-low** (SHORT) → shton një
-  pozicion tjetër me madhësinë normale. **Max 3 për simbol.**
-- **KURRË averaging-down**: shtohet vetëm në fitim, kurrë kundër tij.
-- **Mbrojtje grupi**: kur SL i një pozicioni preket, mbyllen të gjitha shtesat
-  e atij simboli (nuk lihen të humbasin më tej).
-- Shkalla e fitimit $1/$2/$3/$4/$5 (dollarë të plotë) mbetet — çdo pozicion i
-  grupit e kap fitimin e vet, duke dhënë dalje graduale natyrale.
-
-## 🎯 Synimi $60/ditë — çfarë u ndryshua (dhe çfarë është realiste)
-
-**Ndryshimet reale** (nuk ka numra të sajuar):
-- Shkalla **$1 tani kyçet nga trailing** (SL lëviz lart), jo nga kapja e
-  menjëhershme → pozicioni vazhdon drejt **$2/$3/$4/$5** → fitim mesatar më i madh.
-- **Time-stop 30 min**: liron vendet që nuk kanë ecur — me fitim e mbyll me
-  dollarin e plotë të kyçur, pa fitim me humbje të vogël.
-- **MAX_OPEN 30** (më shumë pozicione njëkohësisht) + **cooldown 10s** → më shumë tregti/ditë.
-- Fix `rsi()` në treg pa lëvizje (nuk jep më sinjal të rremë "i mbingarkuar").
-
-**Matematika e ndershme e $60/ditë:** me fitim mesatar ~$2 dhe humbje të vogla,
-duhen **~40–80 tregti të mbyllura në ditë** me normë fitimi pozitive. Boti tani
-ka aftësinë ta bëjë, por **rezultati varet nga tregu** — matet me të dhëna reale
-pas 30+ tregtive (1–2 ditë), jo nga premtime.
-
-## ☁️ Ruajtja përgjithmonë (Turso — databazë falas)
-
-- Pa Turso: Render-i falas e fshin diskun lokal me rindezje → historia reale humbet.
-- Me Turso: çdo hapje/mbyllje tregtie + balanca **sinkronizohet menjëherë**
-  në cloud; kur serveri rindizet, historia e vërtetë **rikthehet automatikisht**.
-- Kredencialet: skedari `turso.json` (url + token) ose variablat e ambientit
-  `TURSO_URL` / `TURSO_TOKEN`. Nëse Turso është jashtë linje, boti vazhdon
-  lokal dhe sinkronizon në goditjen tjetër të suksesshme.
-
 ## 🧩 100,000 agjentë që bashkëpunojnë
 
-- **29 agjentë bërthamë** (16 strategji + Ensemble, Grid, Consensus, AI,
-  Validator, Risk, Sizer, **Pyramid 🪜**, Filler, Tracker, Learning…) + **100,000 variante
+- **28 agjentë bërthamë** (16 strategji + Ensemble, Grid, Consensus, AI,
+  Validator, Risk, Sizer, Filler, Tracker, Learning…) + **100,000 variante
   strategjike unike** (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI,
-  SMA, TRIX, DUALMOM, BTREND, EMARSI…) = **100,029 agjentë gjithsej**.
+  SMA, TRIX, DUALMOM, BTREND, EMARSI…) = **100,028 agjentë gjithsej**.
 - **Mostër rrotulluese:** në çdo cikël votojnë 1,500 agjentë nga 100,000
   (rreth 27 ms) — me kalimin e kohës TË GJITHË 100,000 marrin pjesë
   njësoj shpesh, pa e ngadalësuar botin.
@@ -261,6 +213,3 @@ por asnjë para nuk investohet apo rrezikohet. Tregtimi i kriptomonedhave në
 tregjet reale mbart rrezik të lartë — mos investo para që s'mund t'i humbësh.
 Historiku i tregtive në fillim është **seed demo** (mund të fshihet me Reset).
 
-
----
-> Deploy marker: cloud-storage-live · 2026-08-09

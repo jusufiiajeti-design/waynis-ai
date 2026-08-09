@@ -31,7 +31,6 @@ rewards the strategies that voted correctly — so the bot gets better
 over time.
 """
 import asyncio
-import datetime
 import json
 import os
 import time
@@ -39,14 +38,11 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
-                    MAX_HOLD_MIN, TIME_STOP_SL,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
                     TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST,
-                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL,
-                    MAX_PYRAMID, PYRAMID_CONFIRM_PCT, PYRAMID_MIN_PROFIT_USD,
-                    PYRAMID_RSI_MAX)
+                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL)
 from providers import WATCHLIST
 from strategies import STRATEGIES, vol_ratio, rsi, ema
 from learning import (aggregate_from_trades, meta_threshold,
@@ -843,92 +839,6 @@ class SizerAgent(Agent):
 # ======================================================================
 # 🚦 18 — FILLER
 # ======================================================================
-# ======================================================================
-# 🪜 PYRAMID AGENT — shton pozicion në fitim (si spot pyramiding, por me
-# madhësinë normale të botit: $15 hyrje ose ×komponim). KURRË averaging-down.
-# ======================================================================
-class PyramidAgent(Agent):
-    step, name, icon = 4, "Pyramid", "🪜"
-    role = "Shton pozicion në fitim: higher-high/lower-low, max 3 për simbol, kurrë averaging-down"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        if e.mode != "paper":
-            return
-        open_pos = e.open_positions()
-        if len(open_pos) >= MAX_OPEN:
-            return
-        # grupoj pozicionet e hapura sipas simbolit + drejtimit
-        groups = {}
-        for p in open_pos:
-            key = (p["symbol"], p["side"])
-            g = groups.setdefault(key, {
-                "symbol": p["symbol"], "side": p["side"],
-                "entries": 0, "cost": 0.0, "qty": 0.0,
-                "hi": 0.0, "lo": 1e18})
-            g["entries"] += 1
-            g["cost"] += p["entry"] * p["qty"]
-            g["qty"] += p["qty"]
-            g["hi"] = max(g["hi"], p["entry"])
-            g["lo"] = min(g["lo"], p["entry"])
-
-        for key, g in groups.items():
-            if g["entries"] >= MAX_PYRAMID:
-                continue
-            if len(e.open_positions()) >= MAX_OPEN:
-                break
-            sym, side = key
-            t = ctx.tickers.get(sym)
-            price = t["price"] if t and t.get("price", 0) > 0 else 0.0
-            if not price:
-                continue
-            avg = g["cost"] / g["qty"] if g["qty"] else 0.0
-            unreal = (price - avg) * g["qty"] if side == "LONG" \
-                else (avg - price) * g["qty"]
-            # 🔒 KURRË averaging-down: shtohet VETËM në fitim
-            if unreal < PYRAMID_MIN_PROFIT_USD:
-                continue
-            # higher-high (LONG) / lower-low (SHORT) për konfirmim
-            if side == "LONG":
-                if price <= g["hi"] * (1 + PYRAMID_CONFIRM_PCT):
-                    continue
-            else:
-                if price >= g["lo"] * (1 - PYRAMID_CONFIRM_PCT):
-                    continue
-            # RSI jo ekstrem
-            kl = ctx.candles.get(sym)
-            if kl and len(kl) > 20:
-                r = rsi([c["c"] for c in kl])
-                if side == "LONG" and r > PYRAMID_RSI_MAX:
-                    continue
-                if side == "SHORT" and r < 100 - PYRAMID_RSI_MAX:
-                    continue
-            # madhësia si boti normal (fixed $15 ose komponim)
-            ntl = e.fixed_entry_usd
-            pstop = STOP_LOSS
-            pqty = min(ntl / price,
-                       e.fixed_max_loss_usd / (price * pstop)) if pstop > 0 else 0
-            if pqty <= 0:
-                continue
-            ptp = price * (1 + TAKE_PROFIT) if side == "LONG" \
-                else price * (1 - TAKE_PROFIT)
-            psl = price * (1 - STOP_LOSS) if side == "LONG" \
-                else price * (1 + STOP_LOSS)
-            sig = {"symbol": sym, "direction": side, "entry": price,
-                   "tp": ptp, "sl": psl, "confidence": 70}
-            tid = e._open_trade(sig, pqty, votes=None)
-            if tid:
-                e._event("fill",
-                         f"🪜 {side} {sym} SHTESË {g['entries'] + 1}/{MAX_PYRAMID} "
-                         f"@ {price:.6g} (higher-{'high' if side == 'LONG' else 'low'}, "
-                         f"fitim {unreal:+.2f})",
-                         sym)
-                self.report(
-                    f"🪜 Pyramiding: shtesë {g['entries'] + 1} në {sym} ({side}) "
-                    f"— fitim {unreal:+.2f} USDT",
-                    sym, side, 70)
-
-
 class FillerAgent(Agent):
     step, name, icon = 4, "Filler", "🚦"
     role = "Ekzekuton urdhrin (paper ose real)"
@@ -1022,10 +932,6 @@ class TrackerAgent(Agent):
             # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
             if e.mode == "paper":
                 self._trail_profit(e, pos, price)
-                # ⏱️ TIME-STOP: pas MAX_HOLD_MIN minutash liro vendin —
-                # me fitim ≥$1 e mbyll me dollarin e plotë të kyçur,
-                # pa fitim e mbyll me humbje të vogël (qarkullim më i shpejtë)
-                await self._time_stop(e, pos, price)
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
@@ -1040,7 +946,6 @@ class TrackerAgent(Agent):
             hit_sl = price <= pos["sl"]
             if hit_sl:
                 await e._close_trade(pos, price, "sl")
-                await e._close_siblings(pos, price, "sl")
                 continue
 
             if not pos["tp1_hit"]:
@@ -1089,10 +994,7 @@ class TrackerAgent(Agent):
         net_usd = pnl_usd - fees_est
         if net_usd < 1.0:
             return None            # mban — fitimi nën $1 nuk kapet kurrë
-        # 💰 $1 NUK kapet menjëherë: trailing e kyç $1 (SL lëviz lart) dhe
-        # pozicioni vazhdon drejt $2/$3/$4/$5 — fitimi mesatar rritet,
-        # pa rrezikuar nën $1 (SL i kyçur nuk bie kurrë poshtë shkallës).
-        for rung in (5.0, 4.0, 3.0, 2.0):
+        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
             if net_usd >= rung:
                 return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
         klines = ctx.candles.get(pos["symbol"])
@@ -1157,33 +1059,6 @@ class TrackerAgent(Agent):
             if new_sl < pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
 
-    async def _time_stop(self, e, pos, price):
-        """⏱️ Liron vendin pas MAX_HOLD_MIN minutash:
-        • nëse ka fitim ≥$1 → mbyll me dollarin e plotë të kyçur (jo centa)
-        • nëse s'ka fitim → mbyll me humbje të vogël TIME_STOP_SL
-        Kjo rrit qarkullimin → më shumë tregti në ditë → më shumë $/ditë."""
-        try:
-            opened = datetime.datetime.fromisoformat(pos["opened_at"]).timestamp()
-        except Exception:
-            return
-        if time.time() - opened < MAX_HOLD_MIN * 60:
-            return
-        side = pos["side"]
-        qty = pos["qty"] or 1
-        pnl_usd = (price - pos["entry"]) * qty if side == "LONG" \
-            else (pos["entry"] - price) * qty
-        fees = (pos["entry"] * qty + price * qty) * FEE_RATE
-        net = pnl_usd - fees
-        if net >= 1.0:
-            # kap dollarin e plotë më të lartë të kyçur (kurrë centa)
-            banked = float(int(net))
-            await e._close_trade(pos, price, "time", banked=banked)
-        else:
-            # pa fitim → mbyll me humbje të vogël, liron vendin
-            stop_px = pos["entry"] * (1 - TIME_STOP_SL) if side == "LONG" \
-                else pos["entry"] * (1 + TIME_STOP_SL)
-            await e._close_trade(pos, stop_px, "time")
-
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
@@ -1206,10 +1081,7 @@ class TrackerAgent(Agent):
             banked = float(max(1, int(net))) if net > 0 else None
             await e._close_trade(pos, price, "tp", banked=banked)
         elif hit_sl:
-            # 🪜 SL preket → mbyllet E GJITHË grupi i atij simboli (si në
-            # spot pyramiding): shtesat nuk lihen të humbasin më tej
             await e._close_trade(pos, price, "sl")
-            await e._close_siblings(pos, price, "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]
@@ -1299,5 +1171,5 @@ class LearningAgent(Agent):
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
               [EnsembleVoterAgent, GridBalancerAgent, ConsensusAgent,
                AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
-               RiskManagerAgent, SizerAgent, PyramidAgent, FillerAgent,
-               TrackerAgent, LearningAgent])
+               RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
+               LearningAgent])
