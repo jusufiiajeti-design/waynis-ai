@@ -59,7 +59,9 @@ PYRAMID_RSI_MAX = 78            # s'ngjyhet me RSI ekstrem (LONG <78 / SHORT >22
 # Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
 # nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
+FIXED_ENTRY_USD = 50.0           # hyrja për tregti në USDT — $50 (zgjedhja e
+                                 # përdoruesit): $1 kapet me ~2.2% lëvizje → fitime
+                                 # të shpeshta; humbja/tregti ~$0.18 (SL 0.35%).
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
