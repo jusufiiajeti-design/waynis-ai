@@ -1481,8 +1481,6 @@ document.querySelectorAll(".ni").forEach(ni=>{
   });
 });
 
-
-
 /* ================= chips ================= */
 function buildChips(){
   $("symChips").innerHTML = SYMBOLS.map(s=>`<div class="chip ${s===S.symbol?"on":""}" data-sym="${s}">${s.replace("-USDT","")}</div>`).join("");

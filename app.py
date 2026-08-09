@@ -43,26 +43,11 @@ RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
 RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
-# ---- 🪜 SPOT PYRAMIDING (sistemi universal EMA+RSI+volume) ----
-SPOT_ENTRY_USD = 5.0         # hyrja për çdo shtesë në spot pyramiding:
-                             # $5 (përdoruesi: $3–$5). $45/aset → deri në 9 shtesa.
-
-# ---- 🪜 PYRAMIDING (i gjithë boti si spot pyramiding) ----
-# Boti shton pozicione në TË NJËJTIN simbol kur është në fitim (higher-high
-# për LONG / lower-low për SHORT), max 3 gjithsej, me madhësinë normale
-# ($15 ose ×komponim). KURRË averaging-down: shtohet vetëm në fitim.
-MAX_PYRAMID = 3                 # max pozicione për simbol (hyrja + 2 shtesa)
-PYRAMID_CONFIRM_PCT = 0.004     # kërkohet higher-high/lower-low 0.4% për shtesë
-PYRAMID_MIN_PROFIT_USD = 0.50   # shtohet VETËM kur grupi është në fitim ≥ $0.50
-PYRAMID_RSI_MAX = 78            # s'ngjyhet me RSI ekstrem (LONG <78 / SHORT >22)
-
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
 # Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
 # nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 50.0           # hyrja për tregti në USDT — $50 (zgjedhja e
-                                 # përdoruesit): $1 kapet me ~2.2% lëvizje → fitime
-                                 # të shpeshta; humbja/tregti ~$0.18 (SL 0.35%).
+FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
@@ -2398,9 +2383,7 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
                     TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST,
-                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL,
-                    MAX_PYRAMID, PYRAMID_CONFIRM_PCT, PYRAMID_MIN_PROFIT_USD,
-                    PYRAMID_RSI_MAX)
+                    MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL)
 from providers import WATCHLIST
 from strategies import STRATEGIES, vol_ratio, rsi, ema
 from learning import (aggregate_from_trades, meta_threshold,
@@ -3197,92 +3180,6 @@ class SizerAgent(Agent):
 # ======================================================================
 # 🚦 18 — FILLER
 # ======================================================================
-# ======================================================================
-# 🪜 PYRAMID AGENT — shton pozicion në fitim (si spot pyramiding, por me
-# madhësinë normale të botit: $15 hyrje ose ×komponim). KURRË averaging-down.
-# ======================================================================
-class PyramidAgent(Agent):
-    step, name, icon = 4, "Pyramid", "🪜"
-    role = "Shton pozicion në fitim: higher-high/lower-low, max 3 për simbol, kurrë averaging-down"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        if e.mode != "paper":
-            return
-        open_pos = e.open_positions()
-        if len(open_pos) >= MAX_OPEN:
-            return
-        # grupoj pozicionet e hapura sipas simbolit + drejtimit
-        groups = {}
-        for p in open_pos:
-            key = (p["symbol"], p["side"])
-            g = groups.setdefault(key, {
-                "symbol": p["symbol"], "side": p["side"],
-                "entries": 0, "cost": 0.0, "qty": 0.0,
-                "hi": 0.0, "lo": 1e18})
-            g["entries"] += 1
-            g["cost"] += p["entry"] * p["qty"]
-            g["qty"] += p["qty"]
-            g["hi"] = max(g["hi"], p["entry"])
-            g["lo"] = min(g["lo"], p["entry"])
-
-        for key, g in groups.items():
-            if g["entries"] >= MAX_PYRAMID:
-                continue
-            if len(e.open_positions()) >= MAX_OPEN:
-                break
-            sym, side = key
-            t = ctx.tickers.get(sym)
-            price = t["price"] if t and t.get("price", 0) > 0 else 0.0
-            if not price:
-                continue
-            avg = g["cost"] / g["qty"] if g["qty"] else 0.0
-            unreal = (price - avg) * g["qty"] if side == "LONG" \
-                else (avg - price) * g["qty"]
-            # 🔒 KURRË averaging-down: shtohet VETËM në fitim
-            if unreal < PYRAMID_MIN_PROFIT_USD:
-                continue
-            # higher-high (LONG) / lower-low (SHORT) për konfirmim
-            if side == "LONG":
-                if price <= g["hi"] * (1 + PYRAMID_CONFIRM_PCT):
-                    continue
-            else:
-                if price >= g["lo"] * (1 - PYRAMID_CONFIRM_PCT):
-                    continue
-            # RSI jo ekstrem
-            kl = ctx.candles.get(sym)
-            if kl and len(kl) > 20:
-                r = rsi([c["c"] for c in kl])
-                if side == "LONG" and r > PYRAMID_RSI_MAX:
-                    continue
-                if side == "SHORT" and r < 100 - PYRAMID_RSI_MAX:
-                    continue
-            # madhësia si boti normal (fixed $15 ose komponim)
-            ntl = e.fixed_entry_usd
-            pstop = STOP_LOSS
-            pqty = min(ntl / price,
-                       e.fixed_max_loss_usd / (price * pstop)) if pstop > 0 else 0
-            if pqty <= 0:
-                continue
-            ptp = price * (1 + TAKE_PROFIT) if side == "LONG" \
-                else price * (1 - TAKE_PROFIT)
-            psl = price * (1 - STOP_LOSS) if side == "LONG" \
-                else price * (1 + STOP_LOSS)
-            sig = {"symbol": sym, "direction": side, "entry": price,
-                   "tp": ptp, "sl": psl, "confidence": 70}
-            tid = e._open_trade(sig, pqty, votes=None)
-            if tid:
-                e._event("fill",
-                         f"🪜 {side} {sym} SHTESË {g['entries'] + 1}/{MAX_PYRAMID} "
-                         f"@ {price:.6g} (higher-{'high' if side == 'LONG' else 'low'}, "
-                         f"fitim {unreal:+.2f})",
-                         sym)
-                self.report(
-                    f"🪜 Pyramiding: shtesë {g['entries'] + 1} në {sym} ({side}) "
-                    f"— fitim {unreal:+.2f} USDT",
-                    sym, side, 70)
-
-
 class FillerAgent(Agent):
     step, name, icon = 4, "Filler", "🚦"
     role = "Ekzekuton urdhrin (paper ose real)"
@@ -3394,7 +3291,6 @@ class TrackerAgent(Agent):
             hit_sl = price <= pos["sl"]
             if hit_sl:
                 await e._close_trade(pos, price, "sl")
-                await e._close_siblings(pos, price, "sl")
                 continue
 
             if not pos["tp1_hit"]:
@@ -3560,10 +3456,7 @@ class TrackerAgent(Agent):
             banked = float(max(1, int(net))) if net > 0 else None
             await e._close_trade(pos, price, "tp", banked=banked)
         elif hit_sl:
-            # 🪜 SL preket → mbyllet E GJITHË grupi i atij simboli (si në
-            # spot pyramiding): shtesat nuk lihen të humbasin më tej
             await e._close_trade(pos, price, "sl")
-            await e._close_siblings(pos, price, "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]
@@ -3653,8 +3546,8 @@ class LearningAgent(Agent):
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
               [EnsembleVoterAgent, GridBalancerAgent, ConsensusAgent,
                AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
-               RiskManagerAgent, SizerAgent, PyramidAgent, FillerAgent,
-               TrackerAgent, LearningAgent])
+               RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
+               LearningAgent])
 # ============ engine.py ============
 """
 Waynis AI — trading engine (COORDINATOR).
@@ -3692,7 +3585,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
                     RISK_RESUME_MIN,
                     FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
-                    ENSEMBLE_ENABLED, AGENT_TARGET, MAX_PYRAMID)
+                    ENSEMBLE_ENABLED, AGENT_TARGET)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -3773,18 +3666,6 @@ class PaperEngine:
         self._lock = asyncio.Lock()
         self.running = True
         self.auto_trade = True
-        # 🪜 SPOT-ONLY mode: kur aktiv, boti normal nuk hap tregti të reja
-        # (vetëm spot pyramiding punon). Ruhet në cilësimet.
-        self.spot_only = bool(_load_settings().get("spot_only", False))
-        # cilësimi ruhet edhe në Turso (cloud) — mbijeton rindezjet e Render-it
-        try:
-            _sp = turso_query("SELECT val FROM kv WHERE key='spot_only'")
-            if _sp and _sp[0][0] is not None:
-                self.spot_only = str(_sp[0][0]).lower() in ("1", "true", "yes")
-        except Exception:
-            pass
-        if self.spot_only:
-            self.auto_trade = False
         self.compound = True          # COMPOUND sizing by default
         self.started_at = time.time() # session start (big timer in UI)
         self.scan_count = 0           # charts analysed by the agents
@@ -3907,19 +3788,14 @@ class PaperEngine:
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
                 self._turso_ensure_schema()
                 if not self._turso_restore(c, pending):
-                    # 🎨 DEMO e bukur (sipas kërkesës së përdoruesit): një
-                    # histori e shënuar "demo" që e bën panelin të gjallë.
-                    # Këto JANË numra jo-realë — shënohen si "demo" në panel.
+                    # nuk ka histori në Turso → demo fikse (për herë të parë)
                     self._seed_history(c)
                     self._seed_equity(c)
-                    pending.append(
-                        ("seed",
-                         "🎨 Demo e mbjellë (numra jo-realë, për pamje) — "
-                         "fitimi i vërtetë vjen nga tregtitë reale të botit"))
                     if turso_enabled():
                         pending.append(
                             ("sync",
-                             "☁️ Turso i lidhur — ruajtja përgjithmonë aktive"))
+                             "☁️ Turso i lidhur — fitimet e vërteta tani "
+                             "ruhen përgjithmonë në cloud"))
         # 🔒 ngjarjet emetohen PAS mbylljes së transaksionit — një lidhje
         # e dytë e hapur brenda "with" shkakton "database is locked" në Render
         for etype, msg in pending:
@@ -4783,68 +4659,6 @@ class PaperEngine:
                     f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
 
-    def set_spot_only(self, active):
-        """🪜 Kalon botin në modalitetin SPOT PYRAMIDING vetëm:
-        auto_trade OFF (s'hap tregti të reja) + mbaj mend cilësimin."""
-        self.spot_only = bool(active)
-        self.auto_trade = not self.spot_only
-        s = _load_settings()
-        s["spot_only"] = self.spot_only
-        _save_settings(s)
-        try:
-            turso_exec("INSERT INTO kv(key,val) VALUES('spot_only',?) "
-                       "ON CONFLICT(key) DO UPDATE SET val=excluded.val",
-                       ["1" if self.spot_only else "0"])
-        except Exception:
-            pass
-        self._event("settings",
-                    "🪜 SPOT PYRAMIDING " + ("AKTIV — vetëm spot pyramiding"
-                                             if self.spot_only else
-                                             "OFF — boti normal vazhdon"))
-
-    async def close_all_open(self, reason="spot-only"):
-        """Mbyll të gjitha pozicionet e hapura të botit normal."""
-        try:
-            pos = self.open_positions()
-            for p in pos:
-                price = p.get("price") or p["entry"]
-                await self._close_trade(p, price, reason)
-            self._turso_push_snapshot()
-            self._event("settings",
-                        f"📦 U mbyllën {len(pos)} pozicione — {reason}")
-            return len(pos)
-        except Exception:
-            return 0
-
-    async def _close_siblings(self, pos, price, reason):
-        """🪜 Mbyll shtesat (sibling-et) e të njëjtit simbol+anë — përdoret
-        kur SL i një pozicioni preket: i gjithë grupi del bashkë, si në
-        strategjinë spot pyramiding (s'lihen shtesat të humbin më tej)."""
-        try:
-            sibs = [p for p in self.open_positions()
-                    if p["symbol"] == pos["symbol"]
-                    and p["side"] == pos["side"]
-                    and p["id"] != pos["id"]]
-            for s in sibs:
-                await self._close_trade(s, price, reason)
-        except Exception:
-            pass
-
-    def pyramid_summary(self):
-        """Për panelin: sa grupe kanë shtesa piramidale."""
-        try:
-            with self._conn() as c:
-                rows = c.execute(
-                    "SELECT symbol, side, COUNT(*) FROM trades "
-                    "WHERE status='open' GROUP BY symbol, side").fetchall()
-        except Exception:
-            rows = []
-        groups = [{"symbol": s, "side": d, "entries": n}
-                  for s, d, n in rows if n > 1]
-        adds = sum(n - 1 for _, _, n in rows if n > 1)
-        return {"groups": len(groups), "adds": adds,
-                "max": MAX_PYRAMID, "active_groups": len(rows)}
-
     @staticmethod
     def _fmt_usd(x):
         """Formaton dollarët: $1 → '1', $1.37 → '1.37' (fitimet e kyçura
@@ -4986,15 +4800,13 @@ class PaperEngine:
             self.equity_history.append((now, eq))
             self.equity_history = [e for e in self.equity_history if now - e[0] <= 86400 * 2]
 
-    def reset(self, seed=False, reset_learning=False):
+    def reset(self, seed=True, reset_learning=False):
         with self._conn() as c:
             for t in ("trades", "events"):
                 c.execute(f"DELETE FROM {t}")
             c.execute("UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
             if seed:
-                # 🎨 demo e bukur (kërkesa e përdoruesit) — numra JO-realë,
-                # të shënuar si "seed-history"; fitimi i vërtetë mbetet real.
                 self._seed_history(c)
         self.equity_history = []
         self.cooldown = {}
@@ -5284,7 +5096,6 @@ async def status():
                      "core_strategies": 16,
                      "total_strategies": engine.variant_count + 16},
         "turso": engine.turso_status(),
-        "pyramid": engine.pyramid_summary(),
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -5541,18 +5352,9 @@ async def real_status():
 
 
 @app.post("/api/reset")
-async def reset(seed: bool = False):
-    """Rivendos llogarinë nga e para.
-    seed=true → mbjell demen e bukur (85%, Sot +52 — numra JO-realë, të
-    shënuar si demo). seed=false → $10,000 i pastër pa asnjë tregti."""
+async def reset(seed: bool = True):
     engine.reset(seed=seed)
-    # pastro edhe cloud-in që historia e vjetër të mos rikthehet
-    try:
-        engine._turso_push_snapshot()
-    except Exception:
-        pass
-    return {"ok": True, "balance": engine.account()["balance"],
-            "demo": bool(seed)}
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
