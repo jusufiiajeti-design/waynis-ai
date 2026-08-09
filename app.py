@@ -4992,7 +4992,10 @@ class PaperEngine:
                 c.execute(f"DELETE FROM {t}")
             c.execute("UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-            # seed hiqet plotësisht — kurrë tregti të sajuara (85% ishte fiktive)
+            if seed:
+                # 🎨 demo e bukur (kërkesa e përdoruesit) — numra JO-realë,
+                # të shënuar si "seed-history"; fitimi i vërtetë mbetet real.
+                self._seed_history(c)
         self.equity_history = []
         self.cooldown = {}
         if reset_learning:
