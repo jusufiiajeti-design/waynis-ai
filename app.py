@@ -3907,14 +3907,19 @@ class PaperEngine:
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
                 self._turso_ensure_schema()
                 if not self._turso_restore(c, pending):
-                    # NUK ka demo fiktive — fillon i pastër me $10,000.
-                    # Tregtitë e para të botit janë të vetmet numra realë.
+                    # 🎨 DEMO e bukur (sipas kërkesës së përdoruesit): një
+                    # histori e shënuar "demo" që e bën panelin të gjallë.
+                    # Këto JANË numra jo-realë — shënohen si "demo" në panel.
+                    self._seed_history(c)
                     self._seed_equity(c)
+                    pending.append(
+                        ("seed",
+                         "🎨 Demo e mbjellë (numra jo-realë, për pamje) — "
+                         "fitimi i vërtetë vjen nga tregtitë reale të botit"))
                     if turso_enabled():
                         pending.append(
                             ("sync",
-                             "☁️ Turso i lidhur — fitimet e vërteta tani "
-                             "ruhen përgjithmonë në cloud"))
+                             "☁️ Turso i lidhur — ruajtja përgjithmonë aktive"))
         # 🔒 ngjarjet emetohen PAS mbylljes së transaksionit — një lidhje
         # e dytë e hapur brenda "with" shkakton "database is locked" në Render
         for etype, msg in pending:
