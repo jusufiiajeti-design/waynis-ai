@@ -20,13 +20,11 @@ import os
 import time
 
 from strategies import ema, rsi
+from config import SPOT_ENTRY_USD
 import turso
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "data", "spot_state.json")
-
-# 100€ ≈ 108 USDT për aset (demo)
-CAPITAL_PER_ASSET = 108.0
 
 ASSETS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT"]
 
@@ -41,6 +39,9 @@ RSI_LO, RSI_HI = 55.0, 68.0
 SWING_LOOKBACK = 20       # qirinj për swing-high/low
 BREAKOUT_BUF = 0.001      # 0.1% tampon mbi swing-high
 MAX_ENTRIES = 3
+# Hyrja si boti normal: $15 për çdo shtesë (JO 100€/aset).
+# 3 hyrje × $15 = $45 gjithsej për aset (5 asete = $225 max të ngarkuara).
+CAPITAL_PER_ASSET = SPOT_ENTRY_USD * MAX_ENTRIES
 SL_MAX_DIST = 0.06        # SL max 6% nga hyrja (nëse swing-low është më larg)
 TP1_PCT, TP2_PCT = 6.0, 12.0
 SELL_PCT = 0.25           # 25% në çdo shkallë
@@ -100,6 +101,9 @@ class SpotPyramid:
         for sym in ASSETS:
             self.state[sym] = _new_asset_state(sym)
             if sym in st and isinstance(st[sym], dict):
+                # nëse ndryshoi hyrja (p.sh. 108→45), fillo i freskët për atë aset
+                if abs(st[sym].get("capital", 0) - CAPITAL_PER_ASSET) > 0.01:
+                    continue
                 self.state[sym].update({k: v for k, v in st[sym].items()})
         try:
             rows = turso.query("SELECT val FROM kv WHERE key='spot_trades'")
@@ -265,7 +269,7 @@ class SpotPyramid:
     def _buy(self, st, price, frac, label, k1h, event):
         if st["entries"] >= MAX_ENTRIES:          # max 3 hyrje — kurrë më shumë
             return
-        amt = st["capital"] * frac * (1 - FEE_RATE)
+        amt = SPOT_ENTRY_USD * (1 - FEE_RATE)     # $15 fiks për çdo shtesë
         if amt <= 0 or st["invested"] + amt > st["capital"] * 1.001:
             return
         qty_add = amt / price
@@ -363,6 +367,7 @@ class SpotPyramid:
             })
         return {
             "assets": out,
+            "entry_per_add": SPOT_ENTRY_USD,
             "total_capital": CAPITAL_PER_ASSET * len(ASSETS),
             "total_realized": round(sum(s["realized"] for s in self.state.values()), 2),
             "closed_trades": len(self.trades),
@@ -370,7 +375,7 @@ class SpotPyramid:
             "rules": {
                 "trend": f"EMA{EMA_SLOW} + EMA{EMA_MID}>{EMA_SLOW} + RSI>{RSI_PERIOD}>50 (4H)",
                 "entry": f"EMA{EMA_FAST}/EMA{EMA_MID} + RSI {RSI_LO:.0f}-{RSI_HI:.0f} + volum {VOL_MULT}× + breakout (1H)",
-                "pyramid": f"40/30/30 max {MAX_ENTRIES} hyrje, KURRË averaging-down",
+                "pyramid": f"$15/hyrje max {MAX_ENTRIES} (=$45/aset), KURRË averaging-down",
                 "sl": f"poshtë swing-low (max {SL_MAX_DIST*100:.0f}%), pas BUY2 kurrë nën mesataren",
                 "tp": f"+{TP1_PCT:.0f}% shet 25%, +{TP2_PCT:.0f}% shet 25%, pjesa trailing {TRAIL_PCT*100:.0f}%",
             },

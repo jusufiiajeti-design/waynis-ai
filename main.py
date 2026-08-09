@@ -271,6 +271,7 @@ async def status():
                      "total_strategies": engine.variant_count + 16},
         "turso": engine.turso_status(),
         "pyramid": engine.pyramid_summary(),
+        "spot_only": engine.spot_only,
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -305,6 +306,17 @@ async def trades(limit: int = 60):
 @app.get("/api/spot")
 async def api_spot():
     return spot.summary()
+
+@app.post("/api/mode/spot")
+async def mode_spot(body: dict = None):
+    """🪜 Kalon në SPOT PYRAMIDING vetëm: mbyll të gjitha pozicionet e
+    botit normal dhe ndalon tregtitë e reja (spot vazhdon).
+    body: {active: true|false}"""
+    active = bool((body or {}).get("active", True))
+    engine.set_spot_only(active)
+    closed = await engine.close_all_open("spot-only") if active else 0
+    return {"ok": True, "spot_only": engine.spot_only,
+            "closed_positions": closed, "auto_trade": engine.auto_trade}
 
 @app.get("/api/events")
 async def events(limit: int = 40):

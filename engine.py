@@ -115,6 +115,11 @@ class PaperEngine:
         self._lock = asyncio.Lock()
         self.running = True
         self.auto_trade = True
+        # 🪜 SPOT-ONLY mode: kur aktiv, boti normal nuk hap tregti të reja
+        # (vetëm spot pyramiding punon). Ruhet në cilësimet.
+        self.spot_only = bool(_load_settings().get("spot_only", False))
+        if self.spot_only:
+            self.auto_trade = False
         self.compound = True          # COMPOUND sizing by default
         self.started_at = time.time() # session start (big timer in UI)
         self.scan_count = 0           # charts analysed by the agents
@@ -1107,6 +1112,33 @@ class PaperEngine:
                     f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
                     f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    def set_spot_only(self, active):
+        """🪜 Kalon botin në modalitetin SPOT PYRAMIDING vetëm:
+        auto_trade OFF (s'hap tregti të reja) + mbaj mend cilësimin."""
+        self.spot_only = bool(active)
+        self.auto_trade = not self.spot_only
+        s = _load_settings()
+        s["spot_only"] = self.spot_only
+        _save_settings(s)
+        self._event("settings",
+                    "🪜 SPOT PYRAMIDING " + ("AKTIV — vetëm spot pyramiding"
+                                             if self.spot_only else
+                                             "OFF — boti normal vazhdon"))
+
+    async def close_all_open(self, reason="spot-only"):
+        """Mbyll të gjitha pozicionet e hapura të botit normal."""
+        try:
+            pos = self.open_positions()
+            for p in pos:
+                price = p.get("price") or p["entry"]
+                await self._close_trade(p, price, reason)
+            self._turso_push_snapshot()
+            self._event("settings",
+                        f"📦 U mbyllën {len(pos)} pozicione — {reason}")
+            return len(pos)
+        except Exception:
+            return 0
 
     async def _close_siblings(self, pos, price, reason):
         """🪜 Mbyll shtesat (sibling-et) e të njëjtit simbol+anë — përdoret
