@@ -3751,6 +3751,10 @@ class PaperEngine:
                     # nuk ka histori në Turso → demo fikse (për herë të parë)
                     self._seed_history(c)
                     self._seed_equity(c)
+                    if turso_enabled():
+                        self._event("sync",
+                                    "☁️ Turso i lidhur — fitimet e vërteta "
+                                    "tani ruhen përgjithmonë në cloud")
 
     def _conn(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -3815,6 +3819,17 @@ class PaperEngine:
                     f"☁️ Historia u rikthye nga Turso ({len(rows)} tregti) — "
                     f"asgjë nuk humbi")
         return True
+
+    def turso_status(self):
+        """Për panelin: a është lidhur ruajtja përgjithmonë?"""
+        if not turso_enabled():
+            return {"enabled": False, "db": None}
+        try:
+            u, _ = turso._creds()
+            return {"enabled": True,
+                    "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io"}
+        except Exception:
+            return {"enabled": False, "db": None}
 
     def _turso_push_snapshot(self):
         """Shtyn historinë e vërtetë + balancën në Turso (një kërkesë).
@@ -5014,6 +5029,7 @@ async def status():
                      "variants": engine.variant_count,
                      "core_strategies": 16,
                      "total_strategies": engine.variant_count + 16},
+        "turso": engine.turso_status(),
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,

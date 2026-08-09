@@ -252,6 +252,7 @@ async def status():
                      "variants": engine.variant_count,
                      "core_strategies": 16,
                      "total_strategies": engine.variant_count + 16},
+        "turso": engine.turso_status(),
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
