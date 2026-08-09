@@ -10,9 +10,9 @@ TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
-COOLDOWN_SEC = 20               # cooldown pas mbylljes — më shumë tregti për $60/ditë
-MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
+MAX_OPEN = 30                   # 30 pozicione njëkohësisht → më shumë tregti/ditë (30×$15=$450 rrezik, OK për $10k)
+COOLDOWN_SEC = 10               # cooldown 10s — rihap më shpejt pas mbylljes → më shumë tregti/ditë
+MAX_HOLD_MIN = 30               # time-stop: mbyll pozicionin pas 30 min — me shkallën e kyçur nëse ka fitim, me humbje të vogël nëse jo (liron vendet → më shumë tregti)
 TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
 
 # ---- real money (spot, LONG-only) ----

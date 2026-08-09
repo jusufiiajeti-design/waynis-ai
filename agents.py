@@ -31,6 +31,7 @@ rewards the strategies that voted correctly — so the bot gets better
 over time.
 """
 import asyncio
+import datetime
 import json
 import os
 import time
@@ -38,6 +39,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
+                    MAX_HOLD_MIN, TIME_STOP_SL,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -932,6 +934,10 @@ class TrackerAgent(Agent):
             # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
             if e.mode == "paper":
                 self._trail_profit(e, pos, price)
+                # ⏱️ TIME-STOP: pas MAX_HOLD_MIN minutash liro vendin —
+                # me fitim ≥$1 e mbyll me dollarin e plotë të kyçur,
+                # pa fitim e mbyll me humbje të vogël (qarkullim më i shpejtë)
+                self._time_stop(e, pos, price)
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
@@ -994,7 +1000,10 @@ class TrackerAgent(Agent):
         net_usd = pnl_usd - fees_est
         if net_usd < 1.0:
             return None            # mban — fitimi nën $1 nuk kapet kurrë
-        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
+        # 💰 $1 NUK kapet menjëherë: trailing e kyç $1 (SL lëviz lart) dhe
+        # pozicioni vazhdon drejt $2/$3/$4/$5 — fitimi mesatar rritet,
+        # pa rrezikuar nën $1 (SL i kyçur nuk bie kurrë poshtë shkallës).
+        for rung in (5.0, 4.0, 3.0, 2.0):
             if net_usd >= rung:
                 return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
         klines = ctx.candles.get(pos["symbol"])
@@ -1058,6 +1067,33 @@ class TrackerAgent(Agent):
                 / (qty * (1 + FEE_RATE))
             if new_sl < pos["sl"]:
                 e._update_sl(pos["id"], new_sl)
+
+    async def _time_stop(self, e, pos, price):
+        """⏱️ Liron vendin pas MAX_HOLD_MIN minutash:
+        • nëse ka fitim ≥$1 → mbyll me dollarin e plotë të kyçur (jo centa)
+        • nëse s'ka fitim → mbyll me humbje të vogël TIME_STOP_SL
+        Kjo rrit qarkullimin → më shumë tregti në ditë → më shumë $/ditë."""
+        try:
+            opened = datetime.datetime.fromisoformat(pos["opened_at"]).timestamp()
+        except Exception:
+            return
+        if time.time() - opened < MAX_HOLD_MIN * 60:
+            return
+        side = pos["side"]
+        qty = pos["qty"] or 1
+        pnl_usd = (price - pos["entry"]) * qty if side == "LONG" \
+            else (pos["entry"] - price) * qty
+        fees = (pos["entry"] * qty + price * qty) * FEE_RATE
+        net = pnl_usd - fees
+        if net >= 1.0:
+            # kap dollarin e plotë më të lartë të kyçur (kurrë centa)
+            banked = float(int(net))
+            await e._close_trade(pos, price, "time", banked=banked)
+        else:
+            # pa fitim → mbyll me humbje të vogël, liron vendin
+            stop_px = pos["entry"] * (1 - TIME_STOP_SL) if side == "LONG" \
+                else pos["entry"] * (1 + TIME_STOP_SL)
+            await e._close_trade(pos, stop_px, "time")
 
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
