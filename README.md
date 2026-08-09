@@ -97,6 +97,21 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
+## 🎯 Synimi $60/ditë — çfarë u ndryshua (dhe çfarë është realiste)
+
+**Ndryshimet reale** (nuk ka numra të sajuar):
+- Shkalla **$1 tani kyçet nga trailing** (SL lëviz lart), jo nga kapja e
+  menjëhershme → pozicioni vazhdon drejt **$2/$3/$4/$5** → fitim mesatar më i madh.
+- **Time-stop 30 min**: liron vendet që nuk kanë ecur — me fitim e mbyll me
+  dollarin e plotë të kyçur, pa fitim me humbje të vogël.
+- **MAX_OPEN 30** (më shumë pozicione njëkohësisht) + **cooldown 10s** → më shumë tregti/ditë.
+- Fix `rsi()` në treg pa lëvizje (nuk jep më sinjal të rremë "i mbingarkuar").
+
+**Matematika e ndershme e $60/ditë:** me fitim mesatar ~$2 dhe humbje të vogla,
+duhen **~40–80 tregti të mbyllura në ditë** me normë fitimi pozitive. Boti tani
+ka aftësinë ta bëjë, por **rezultati varet nga tregu** — matet me të dhëna reale
+pas 30+ tregtive (1–2 ditë), jo nga premtime.
+
 ## ☁️ Ruajtja përgjithmonë (Turso — databazë falas)
 
 - Pa Turso: Render-i falas e fshin diskun lokal me rindezje → historia reale humbet.
