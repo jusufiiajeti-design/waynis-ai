@@ -43,8 +43,8 @@ RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 🪜 SPOT PYRAMIDING (sistemi universal EMA+RSI+volume) ----
-SPOT_ENTRY_USD = 15.0        # hyrja për çdo shtesë në spot pyramiding —
-                             # si boti normal ($15), JO 100€. 3 hyrje = $45/aset.
+SPOT_ENTRY_USD = 5.0         # hyrja për çdo shtesë në spot pyramiding:
+                             # $5 (përdoruesi: $3–$5). $45/aset → deri në 9 shtesa.
 
 # ---- 🪜 PYRAMIDING (i gjithë boti si spot pyramiding) ----
 # Boti shton pozicione në TË NJËJTIN simbol kur është në fitim (higher-high

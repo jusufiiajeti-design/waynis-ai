@@ -543,9 +543,24 @@ async def real_status():
 
 
 @app.post("/api/reset")
-async def reset(seed: bool = True):
+async def reset(seed: bool = False):
+    """Rivendos llogarinë nga e para (bilanci $10,000 pa demen fiktive),
+    rivendos edhe spot pyramiding ($45/aset, hyrja $5) dhe ruan SPOT-ONLY."""
     engine.reset(seed=seed)
-    return {"ok": True}
+    try:
+        spot.reset()
+    except Exception:
+        pass
+    # pastro edhe cloud-in (Turso) që historia e vjetër të mos rikthehet
+    try:
+        engine._turso_push_snapshot()
+    except Exception:
+        pass
+    # mbaj SPOT-ONLY aktiv (nëse ishte)
+    if engine.spot_only:
+        engine.set_spot_only(True)
+    return {"ok": True, "spot_only": engine.spot_only,
+            "balance": engine.account()["balance"]}
 
 
 # ---------------------------------------------------------------------------

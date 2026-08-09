@@ -38,10 +38,11 @@ VOL_MULT = 1.2            # volum breakout >= 1.2 × mesatarja
 RSI_LO, RSI_HI = 55.0, 68.0
 SWING_LOOKBACK = 20       # qirinj për swing-high/low
 BREAKOUT_BUF = 0.001      # 0.1% tampon mbi swing-high
-MAX_ENTRIES = 3
-# Hyrja si boti normal: $15 për çdo shtesë (JO 100€/aset).
-# 3 hyrje × $15 = $45 gjithsej për aset (5 asete = $225 max të ngarkuara).
-CAPITAL_PER_ASSET = SPOT_ENTRY_USD * MAX_ENTRIES
+# Kapitali $45 për aset (kërkesa e përdoruesit), hyrja $5 për shtesë
+# (përdoruesi: $3–$5). $45 / $5 = deri në 9 shtesa për aset, por me rregullin
+# e artë: shtohet VETËM në fitim me higher-high — kurrë averaging-down.
+CAPITAL_PER_ASSET = 45.0
+MAX_ENTRIES = max(1, int(CAPITAL_PER_ASSET // SPOT_ENTRY_USD)) if SPOT_ENTRY_USD else 3
 SL_MAX_DIST = 0.06        # SL max 6% nga hyrja (nëse swing-low është më larg)
 TP1_PCT, TP2_PCT = 6.0, 12.0
 SELL_PCT = 0.25           # 25% në çdo shkallë
@@ -344,6 +345,14 @@ class SpotPyramid:
                   f"🪜 {st['symbol']} u mbyll — {reason}: "
                   f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT")
 
+    def reset(self):
+        """Rivendos spot pyramiding nga e para (kapital i freskët $45/aset)."""
+        self.state = {}
+        self.trades = []
+        for sym in ASSETS:
+            self.state[sym] = _new_asset_state(sym)
+        self._save()
+
     # ------------------------------------------------------------------
     # Për API / panel
     # ------------------------------------------------------------------
@@ -375,7 +384,7 @@ class SpotPyramid:
             "rules": {
                 "trend": f"EMA{EMA_SLOW} + EMA{EMA_MID}>{EMA_SLOW} + RSI>{RSI_PERIOD}>50 (4H)",
                 "entry": f"EMA{EMA_FAST}/EMA{EMA_MID} + RSI {RSI_LO:.0f}-{RSI_HI:.0f} + volum {VOL_MULT}× + breakout (1H)",
-                "pyramid": f"$15/hyrje max {MAX_ENTRIES} (=$45/aset), KURRË averaging-down",
+                "pyramid": f"${SPOT_ENTRY_USD:g}/hyrje max {MAX_ENTRIES} (=$45/aset), KURRË averaging-down",
                 "sl": f"poshtë swing-low (max {SL_MAX_DIST*100:.0f}%), pas BUY2 kurrë nën mesataren",
                 "tp": f"+{TP1_PCT:.0f}% shet 25%, +{TP2_PCT:.0f}% shet 25%, pjesa trailing {TRAIL_PCT*100:.0f}%",
             },
