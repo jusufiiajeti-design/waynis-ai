@@ -40,7 +40,7 @@ RISK_LOOKBACK = 10              # last N closed trades evaluated
 RISK_BAD_WR = 0.45              # if win rate below this → de-risk
 RISK_BAD_NET = 0.0              # if net pnl over lookback below this → de-risk
 RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
-RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
+RISK_PAUSE_MIN = 1              # push vetëm 1 minutë pas humbjeve (kërkesa e përdoruesit)
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
 # ---- 🪜 SPOT PYRAMIDING (sistemi universal EMA+RSI+volume) ----
@@ -60,7 +60,7 @@ PYRAMID_RSI_MAX = 78            # s'ngjyhet me RSI ekstrem (LONG <78 / SHORT >22
 # Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
 # nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
 FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
+FIXED_ENTRY_USD = 10.0           # hyrja për tregti në USDT — $10 (kërkesa e përdoruesit)
 FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
 
 # ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
