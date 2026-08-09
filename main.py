@@ -29,8 +29,6 @@ app.add_middleware(
 
 market = MarketData()
 engine = PaperEngine(market)
-from spotgrid import SpotPyramid
-spot = SpotPyramid(market)
 
 clients = set()
 
@@ -41,23 +39,8 @@ clients = set()
 @app.on_event("startup")
 async def startup():
     app.state.task = asyncio.create_task(engine.run())
-    app.state.spot_task = asyncio.create_task(_spot_loop())
     # warm the ticker cache so the first page load is instant
     await asyncio.to_thread(_warmup)
-
-def _spot_event(etype, msg, symbol=None):
-    try:
-        engine._event(etype, msg, symbol)
-    except Exception:
-        pass
-
-async def _spot_loop():
-    while True:
-        try:
-            await spot.cycle(event=_spot_event)
-        except Exception:
-            pass
-        await asyncio.sleep(25)
 
 def _warmup():
     import urllib.request
@@ -271,7 +254,6 @@ async def status():
                      "total_strategies": engine.variant_count + 16},
         "turso": engine.turso_status(),
         "pyramid": engine.pyramid_summary(),
-        "spot_only": engine.spot_only,
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -302,21 +284,6 @@ async def equity(limit: int = 400):
 async def trades(limit: int = 60):
     return {"trades": engine.trades(limit)}
 
-
-@app.get("/api/spot")
-async def api_spot():
-    return spot.summary()
-
-@app.post("/api/mode/spot")
-async def mode_spot(body: dict = None):
-    """🪜 Kalon në SPOT PYRAMIDING vetëm: mbyll të gjitha pozicionet e
-    botit normal dhe ndalon tregtitë e reja (spot vazhdon).
-    body: {active: true|false}"""
-    active = bool((body or {}).get("active", True))
-    engine.set_spot_only(active)
-    closed = await engine.close_all_open("spot-only") if active else 0
-    return {"ok": True, "spot_only": engine.spot_only,
-            "closed_positions": closed, "auto_trade": engine.auto_trade}
 
 @app.get("/api/events")
 async def events(limit: int = 40):
@@ -544,23 +511,15 @@ async def real_status():
 
 @app.post("/api/reset")
 async def reset(seed: bool = False):
-    """Rivendos llogarinë nga e para (bilanci $10,000 pa demen fiktive),
-    rivendos edhe spot pyramiding ($45/aset, hyrja $5) dhe ruan SPOT-ONLY."""
+    """Rivendos llogarinë nga e para (bilanci $10,000 pa asnjë tregti
+    të sajuar) dhe pastron edhe cloud-in (Turso)."""
     engine.reset(seed=seed)
-    try:
-        spot.reset()
-    except Exception:
-        pass
-    # pastro edhe cloud-in (Turso) që historia e vjetër të mos rikthehet
+    # pastro edhe cloud-in që historia e vjetër të mos rikthehet
     try:
         engine._turso_push_snapshot()
     except Exception:
         pass
-    # mbaj SPOT-ONLY aktiv (nëse ishte)
-    if engine.spot_only:
-        engine.set_spot_only(True)
-    return {"ok": True, "spot_only": engine.spot_only,
-            "balance": engine.account()["balance"]}
+    return {"ok": True, "balance": engine.account()["balance"]}
 
 
 # ---------------------------------------------------------------------------

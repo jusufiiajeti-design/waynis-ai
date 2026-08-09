@@ -249,8 +249,8 @@ class PaperEngine:
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
                 self._turso_ensure_schema()
                 if not self._turso_restore(c, pending):
-                    # nuk ka histori në Turso → demo fikse (për herë të parë)
-                    self._seed_history(c)
+                    # NUK ka demo fiktive — fillon i pastër me $10,000.
+                    # Tregtitë e para të botit janë të vetmet numra realë.
                     self._seed_equity(c)
                     if turso_enabled():
                         pending.append(
@@ -1323,14 +1323,13 @@ class PaperEngine:
             self.equity_history.append((now, eq))
             self.equity_history = [e for e in self.equity_history if now - e[0] <= 86400 * 2]
 
-    def reset(self, seed=True, reset_learning=False):
+    def reset(self, seed=False, reset_learning=False):
         with self._conn() as c:
             for t in ("trades", "events"):
                 c.execute(f"DELETE FROM {t}")
             c.execute("UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-            if seed:
-                self._seed_history(c)
+            # seed hiqet plotësisht — kurrë tregti të sajuara (85% ishte fiktive)
         self.equity_history = []
         self.cooldown = {}
         if reset_learning:
