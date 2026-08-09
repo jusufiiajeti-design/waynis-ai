@@ -3774,6 +3774,13 @@ class PaperEngine:
         # 🪜 SPOT-ONLY mode: kur aktiv, boti normal nuk hap tregti të reja
         # (vetëm spot pyramiding punon). Ruhet në cilësimet.
         self.spot_only = bool(_load_settings().get("spot_only", False))
+        # cilësimi ruhet edhe në Turso (cloud) — mbijeton rindezjet e Render-it
+        try:
+            _sp = turso_query("SELECT val FROM kv WHERE key='spot_only'")
+            if _sp and _sp[0][0] is not None:
+                self.spot_only = str(_sp[0][0]).lower() in ("1", "true", "yes")
+        except Exception:
+            pass
         if self.spot_only:
             self.auto_trade = False
         self.compound = True          # COMPOUND sizing by default
@@ -4777,6 +4784,12 @@ class PaperEngine:
         s = _load_settings()
         s["spot_only"] = self.spot_only
         _save_settings(s)
+        try:
+            turso_exec("INSERT INTO kv(key,val) VALUES('spot_only',?) "
+                       "ON CONFLICT(key) DO UPDATE SET val=excluded.val",
+                       ["1" if self.spot_only else "0"])
+        except Exception:
+            pass
         self._event("settings",
                     "🪜 SPOT PYRAMIDING " + ("AKTIV — vetëm spot pyramiding"
                                              if self.spot_only else
