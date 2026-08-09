@@ -97,6 +97,15 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
+## ☁️ Ruajtja përgjithmonë (Turso — databazë falas)
+
+- Pa Turso: Render-i falas e fshin diskun lokal me rindezje → historia reale humbet.
+- Me Turso: çdo hapje/mbyllje tregtie + balanca **sinkronizohet menjëherë**
+  në cloud; kur serveri rindizet, historia e vërtetë **rikthehet automatikisht**.
+- Kredencialet: skedari `turso.json` (url + token) ose variablat e ambientit
+  `TURSO_URL` / `TURSO_TOKEN`. Nëse Turso është jashtë linje, boti vazhdon
+  lokal dhe sinkronizon në goditjen tjetër të suksesshme.
+
 ## 🧩 100,000 agjentë që bashkëpunojnë
 
 - **28 agjentë bërthamë** (16 strategji + Ensemble, Grid, Consensus, AI,

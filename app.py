@@ -85,6 +85,109 @@ MTF_SLOW = 50                    # EMA slow period on MTF
 MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
 
 
+# ============ turso.py ============
+"""
+Waynis AI — Turso (libsql) cloud persistence.
+
+Ruajtja PËRGJITHMONË e tregtive/balancës në një databazë falas në internet.
+Përdor vetëm urllib (asnjë varësi ekstra) dhe API-në HTTP të Turso-s
+(/v2/pipeline). Nëse Turso nuk është i arritshëm, boti vazhdon lokalisht
+(offline) dhe ri-sinkronizon në goditjen tjetër të suksesshme.
+"""
+import json
+import os
+import urllib.request
+
+
+def _creds():
+    url = (os.environ.get("TURSO_URL") or "").strip()
+    token = (os.environ.get("TURSO_TOKEN") or "").strip()
+    if not url or not token:
+        try:
+            base = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base, "turso.json"), "r", encoding="utf-8") as f:
+                d = json.load(f)
+            url = url or str(d.get("url", "")).strip()
+            token = token or str(d.get("token", "")).strip()
+        except Exception:
+            pass
+    return url, token
+
+
+def enabled():
+    u, t = _creds()
+    return bool(u and t)
+
+
+def _request(sql, args, want_rows):
+    u, t = _creds()
+    host = u.split("://", 1)[-1].rstrip("/")
+    payload = {
+        "requests": [{"type": "execute", "stmt": {"sql": sql, "args": args or []}}],
+        "mode": "rows" if want_rows else "write",
+    }
+    req = urllib.request.Request(
+        "https://" + host + "/v2/pipeline",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": "Bearer " + t, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _val(cell):
+    """Turso kthen qeliza si {'type':..,'value':..} ose vlera të thjeshta."""
+    if isinstance(cell, dict):
+        return cell.get("value")
+    return cell
+
+
+def query(sql, args=None):
+    """Kthen lista rreshtash (tupla) ose [] nëse dështon/pa kredenciale."""
+    if not enabled():
+        return []
+    try:
+        out = _request(sql, args, True)
+    except Exception:
+        return []
+    rows = []
+    for res in out.get("results", []):
+        rr = res.get("response", {}).get("result", {})
+        if rr.get("type") == "ok":
+            for row in rr.get("rows", []):
+                rows.append(tuple(_val(c) for c in row.get("row", [])))
+    return rows
+
+
+def exec_sql(sql, args=None):
+    """Ekzekuton një INSERT/UPDATE/DELETE/DDL. True nëse shkoi mirë."""
+    if not enabled():
+        return False
+    try:
+        _request(sql, args, False)
+        return True
+    except Exception:
+        return False
+
+
+def batch_exec(items):
+    """Ekzekuton shumë deklarata në NJË kërkesë HTTP (pipeline)."""
+    if not enabled() or not items:
+        return False
+    u, t = _creds()
+    host = u.split("://", 1)[-1].rstrip("/")
+    reqs = [{"type": "execute", "stmt": {"sql": s, "args": a or []}}
+            for s, a in items]
+    payload = {"requests": reqs, "mode": "write"}
+    try:
+        req = urllib.request.Request(
+            "https://" + host + "/v2/pipeline",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": "Bearer " + t,
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return True
+    except Exception:
+        return False
 # ============ providers.py ============
 """
 Price data providers for the Waynis AI paper-trading bot.
@@ -3426,6 +3529,8 @@ from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
 from strategies import generate_variant_strategies
+from turso import (query as turso_query, exec_sql as turso_exec,
+                   batch_exec as turso_batch, enabled as turso_enabled)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -3615,12 +3720,115 @@ class PaperEngine:
                 c.execute(
                     "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?)",
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-                self._seed_history(c)
-                self._seed_equity(c)
+                self._turso_ensure_schema()
+                if not self._turso_restore(c):
+                    # nuk ka histori në Turso → demo fikse (për herë të parë)
+                    self._seed_history(c)
+                    self._seed_equity(c)
 
     def _conn(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         return sqlite3.connect(DB_PATH)
+
+    # ------------------------------------------------------------------
+    # ☁️ Turso — ruajtja përgjithmonë (databazë falas në internet)
+    # ------------------------------------------------------------------
+    def _turso_ensure_schema(self):
+        if not turso_enabled():
+            return
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS account(id INTEGER PRIMARY KEY, "
+            "balance REAL, peak REAL, started_at TEXT)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS trades(id INTEGER PRIMARY KEY, "
+            "symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL, "
+            "tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT, "
+            "pnl REAL, confidence REAL, reason TEXT, fees REAL, "
+            "bracket TEXT, votes TEXT, tp1 REAL, tp1_hit INTEGER DEFAULT 0, "
+            "partial_pnl REAL, trail_high REAL)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY "
+            "AUTOINCREMENT, ts TEXT, type TEXT, msg TEXT, symbol TEXT)")
+
+    def _turso_restore(self, c):
+        """Nëse lokalja u fshi (rindezje Render), rikthe historinë e
+        vërtetë nga Turso. Kthen True nëse u rikthye diçka."""
+        if not turso_enabled():
+            return False
+        rows = turso_query(
+            "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
+            "closed_at,pnl,confidence,reason,fees,bracket,votes,tp1,"
+            "tp1_hit,partial_pnl,trail_high FROM trades ORDER BY id")
+        if not rows:
+            return False
+        c.execute("DELETE FROM trades")
+        for r in rows:
+            if len(r) < 21:
+                continue
+            (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+             opened_at, closed_at, pnl, confidence, reason, fees, bracket,
+             votes, tp1, tp1_hit, partial_pnl, trail_high) = r
+            c.execute(
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+                 opened_at, closed_at, pnl, confidence, reason, fees,
+                 bracket, votes, tp1, tp1_hit, partial_pnl, trail_high))
+        acct = turso_query(
+            "SELECT balance, peak, started_at FROM account WHERE id=1")
+        if acct and acct[0]:
+            bal, peak, started = acct[0]
+            c.execute(
+                "UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
+                (bal if bal is not None else STARTING_BALANCE,
+                 peak if peak is not None else STARTING_BALANCE,
+                 started or now_iso()))
+        self._event("sync",
+                    f"☁️ Historia u rikthye nga Turso ({len(rows)} tregti) — "
+                    f"asgjë nuk humbi")
+        return True
+
+    def _turso_push_snapshot(self):
+        """Shtyn historinë e vërtetë + balancën në Turso (një kërkesë).
+        Nuk prek tregtitë demo (seed). Nëse Turso është offline, vazhdojmë
+        lokal — rindezja tjetër e suksesshme sinkronizon gjithçka."""
+        if not turso_enabled():
+            return
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,"
+                    "opened_at,closed_at,pnl,confidence,reason,fees,bracket,"
+                    "votes,tp1,tp1_hit,partial_pnl,trail_high FROM trades "
+                    "WHERE reason IS NULL OR reason != 'seed-history'"
+                ).fetchall()
+                bal, peak, started = c.execute(
+                    "SELECT balance, peak, started_at FROM account WHERE id=1"
+                ).fetchone()
+        except Exception:
+            return
+        if not rows and bal is None:
+            return
+        items = [
+            ("DELETE FROM trades WHERE reason IS NULL OR "
+             "reason != 'seed-history'", [])]
+        placeholders = ",".join("?" * 21)
+        for r in rows:
+            items.append((
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(" + placeholders + ")", list(r)))
+        items.append((
+            "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET balance=excluded.balance, "
+            "peak=excluded.peak, started_at=excluded.started_at",
+            [bal if bal is not None else STARTING_BALANCE,
+             peak if peak is not None else STARTING_BALANCE,
+             started or now_iso()]))
+        turso_batch(items)
 
     def _seed_history(self, c):
         """Seed a fixed paper history so the dashboard feels alive.
@@ -4284,6 +4492,7 @@ class PaperEngine:
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
                  json.dumps(votes or []), tp1))
+            self._turso_push_snapshot()      # ☁️ ruaj përgjithmonë
             return cur.lastrowid
 
     def _update_sl(self, trade_id, new_sl):
@@ -4325,6 +4534,7 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
+        self._turso_push_snapshot()          # ☁️ fitimi i kyçur ruhet
         if reason.startswith("smart:"):
             label = "Smart"
         elif reason == "tp":
@@ -4404,6 +4614,7 @@ class PaperEngine:
                 (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
         self.cooldown[pos["symbol"]] = time.time()
         self.real_balance_cache = (0.0, 0.0)
+        self._turso_push_snapshot()          # ☁️ ruaj përgjithmonë
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
