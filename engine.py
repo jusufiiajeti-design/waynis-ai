@@ -34,7 +34,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
                     RISK_RESUME_MIN,
                     FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
-                    ENSEMBLE_ENABLED, AGENT_TARGET)
+                    ENSEMBLE_ENABLED, AGENT_TARGET, MAX_PYRAMID)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
@@ -115,6 +115,18 @@ class PaperEngine:
         self._lock = asyncio.Lock()
         self.running = True
         self.auto_trade = True
+        # 🪜 SPOT-ONLY mode: kur aktiv, boti normal nuk hap tregti të reja
+        # (vetëm spot pyramiding punon). Ruhet në cilësimet.
+        self.spot_only = bool(_load_settings().get("spot_only", False))
+        # cilësimi ruhet edhe në Turso (cloud) — mbijeton rindezjet e Render-it
+        try:
+            _sp = turso_query("SELECT val FROM kv WHERE key='spot_only'")
+            if _sp and _sp[0][0] is not None:
+                self.spot_only = str(_sp[0][0]).lower() in ("1", "true", "yes")
+        except Exception:
+            pass
+        if self.spot_only:
+            self.auto_trade = False
         self.compound = True          # COMPOUND sizing by default
         self.started_at = time.time() # session start (big timer in UI)
         self.scan_count = 0           # charts analysed by the agents
@@ -1107,6 +1119,68 @@ class PaperEngine:
                     f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
                     f"USDT (tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    def set_spot_only(self, active):
+        """🪜 Kalon botin në modalitetin SPOT PYRAMIDING vetëm:
+        auto_trade OFF (s'hap tregti të reja) + mbaj mend cilësimin."""
+        self.spot_only = bool(active)
+        self.auto_trade = not self.spot_only
+        s = _load_settings()
+        s["spot_only"] = self.spot_only
+        _save_settings(s)
+        try:
+            turso_exec("INSERT INTO kv(key,val) VALUES('spot_only',?) "
+                       "ON CONFLICT(key) DO UPDATE SET val=excluded.val",
+                       ["1" if self.spot_only else "0"])
+        except Exception:
+            pass
+        self._event("settings",
+                    "🪜 SPOT PYRAMIDING " + ("AKTIV — vetëm spot pyramiding"
+                                             if self.spot_only else
+                                             "OFF — boti normal vazhdon"))
+
+    async def close_all_open(self, reason="spot-only"):
+        """Mbyll të gjitha pozicionet e hapura të botit normal."""
+        try:
+            pos = self.open_positions()
+            for p in pos:
+                price = p.get("price") or p["entry"]
+                await self._close_trade(p, price, reason)
+            self._turso_push_snapshot()
+            self._event("settings",
+                        f"📦 U mbyllën {len(pos)} pozicione — {reason}")
+            return len(pos)
+        except Exception:
+            return 0
+
+    async def _close_siblings(self, pos, price, reason):
+        """🪜 Mbyll shtesat (sibling-et) e të njëjtit simbol+anë — përdoret
+        kur SL i një pozicioni preket: i gjithë grupi del bashkë, si në
+        strategjinë spot pyramiding (s'lihen shtesat të humbin më tej)."""
+        try:
+            sibs = [p for p in self.open_positions()
+                    if p["symbol"] == pos["symbol"]
+                    and p["side"] == pos["side"]
+                    and p["id"] != pos["id"]]
+            for s in sibs:
+                await self._close_trade(s, price, reason)
+        except Exception:
+            pass
+
+    def pyramid_summary(self):
+        """Për panelin: sa grupe kanë shtesa piramidale."""
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT symbol, side, COUNT(*) FROM trades "
+                    "WHERE status='open' GROUP BY symbol, side").fetchall()
+        except Exception:
+            rows = []
+        groups = [{"symbol": s, "side": d, "entries": n}
+                  for s, d, n in rows if n > 1]
+        adds = sum(n - 1 for _, _, n in rows if n > 1)
+        return {"groups": len(groups), "adds": adds,
+                "max": MAX_PYRAMID, "active_groups": len(rows)}
 
     @staticmethod
     def _fmt_usd(x):

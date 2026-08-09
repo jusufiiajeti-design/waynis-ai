@@ -42,6 +42,19 @@ RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
 RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
 RISK_RESUME_MIN = 3             # re-evaluate after N minutes
 
+# ---- 🪜 SPOT PYRAMIDING (sistemi universal EMA+RSI+volume) ----
+SPOT_ENTRY_USD = 5.0         # hyrja për çdo shtesë në spot pyramiding:
+                             # $5 (përdoruesi: $3–$5). $45/aset → deri në 9 shtesa.
+
+# ---- 🪜 PYRAMIDING (i gjithë boti si spot pyramiding) ----
+# Boti shton pozicione në TË NJËJTIN simbol kur është në fitim (higher-high
+# për LONG / lower-low për SHORT), max 3 gjithsej, me madhësinë normale
+# ($15 ose ×komponim). KURRË averaging-down: shtohet vetëm në fitim.
+MAX_PYRAMID = 3                 # max pozicione për simbol (hyrja + 2 shtesa)
+PYRAMID_CONFIRM_PCT = 0.004     # kërkohet higher-high/lower-low 0.4% për shtesë
+PYRAMID_MIN_PROFIT_USD = 0.50   # shtohet VETËM kur grupi është në fitim ≥ $0.50
+PYRAMID_RSI_MAX = 78            # s'ngjyhet me RSI ekstrem (LONG <78 / SHORT >22)
+
 # ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
 # Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
 # nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
