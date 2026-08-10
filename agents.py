@@ -271,7 +271,7 @@ class ConsensusAgent(Agent):
                 continue
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
-            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
+            if len(supporting) < 3:              # 🧠 duhen ≥3 strategji bashkë (sinjal më cilësor)
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
@@ -733,14 +733,31 @@ class TrackerAgent(Agent):
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
         if not hit_tp and not hit_sl:
-            if side == "LONG" and price >= pos["entry"] * (1 + BREAKEVEN_AT):
-                new_sl = pos["entry"] * 1.0005
-                if new_sl > pos["sl"]:
-                    e._update_sl(pos["id"], new_sl)
-            elif side == "SHORT" and price <= pos["entry"] * (1 - BREAKEVEN_AT):
-                new_sl = pos["entry"] * 0.9995
-                if new_sl < pos["sl"]:
-                    e._update_sl(pos["id"], new_sl)
+            # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.8%, SL ngrihet
+            # pas çmimit (0.6% poshtë majës) — nëse tregu kthehet, mbyll me
+            # fitim të mirë në vend që të presë TP-në dhe të kthehet në humbje.
+            trail_on = 0.008
+            trail_dist = 0.006
+            if side == "LONG":
+                pnl_pct = (price - pos["entry"]) / pos["entry"]
+                if pnl_pct >= trail_on:
+                    new_sl = price * (1 - trail_dist)
+                    if new_sl > pos["sl"]:
+                        e._update_sl(pos["id"], new_sl)
+                elif pnl_pct >= BREAKEVEN_AT:
+                    new_sl = pos["entry"] * 1.0005
+                    if new_sl > pos["sl"]:
+                        e._update_sl(pos["id"], new_sl)
+            else:
+                pnl_pct = (pos["entry"] - price) / pos["entry"]
+                if pnl_pct >= trail_on:
+                    new_sl = price * (1 + trail_dist)
+                    if new_sl < pos["sl"]:
+                        e._update_sl(pos["id"], new_sl)
+                elif pnl_pct >= BREAKEVEN_AT:
+                    new_sl = pos["entry"] * 0.9995
+                    if new_sl < pos["sl"]:
+                        e._update_sl(pos["id"], new_sl)
         if hit_tp or hit_sl:
             await e._close_trade(pos, price, "tp" if hit_tp else "sl")
 
