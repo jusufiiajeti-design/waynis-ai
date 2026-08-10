@@ -2,7 +2,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
-SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
+SCAN_BATCH = 60                 # skanon të GJITHA monedhat çdo cikël (52+ → 60)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
 TAKE_PROFIT = 0.020             # +2.0% TP — fitim më i madh (testuar: WR 67%, +$6.33/tregti)
