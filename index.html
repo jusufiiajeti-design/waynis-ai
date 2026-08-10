@@ -326,6 +326,7 @@
     <div class="card">
       <h3>⚙️ 6-Cycle Execution Pipeline · 20 Agjentë</h3>
       <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 20 agjentët…</div>
+      <div class="agents-line" id="groupsLine" style="background:rgba(89,255,164,.06)">👥 Duke ngarkuar grupet…</div>
       <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
@@ -804,6 +805,7 @@ function renderStatus(){
   else { lkEl.textContent = lk.enabled?"Gati (mbrojtje aktive)":"OFF"; lkEl.style.color=""; }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
+  renderGroupsLine();
   renderAgentsGrid(S.status.agents);
   renderAIBox(S.status);
 }
@@ -828,6 +830,18 @@ function renderAgentsLine(agents){
   if(!agents) return;
   $("agentsLine").innerHTML = "🤖 <b>20 agjentë bashkëpunues</b>: 10 strategji votojnë → " +
     "🗳️ konsensus me pesha të mësuara · 🎓 mësojnë pas çdo tregtie";
+}
+function renderGroupsLine(){
+  const g = (S.status&&S.status.groups)||{};
+  const defs = g.defs||[];
+  const el = document.getElementById("groupsLine");
+  if(!el) return;
+  const last = g.last;
+  let txt = defs.map(d=>`${d.icon} ${d.name}`).join(" · ");
+  if(last){
+    txt += ` &nbsp;→&nbsp; <b>${last.line}</b> (${last.approvals}/${last.need}) ${last.symbol} ${last.direction}`;
+  }
+  el.innerHTML = `👥 <b>Grupacionet:</b> ` + txt;
 }
 function renderAgentsGrid(agents){
   if(!agents) return;

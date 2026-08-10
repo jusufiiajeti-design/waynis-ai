@@ -237,6 +237,12 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "turso": engine.turso_status(),
+        "groups": {
+            "defs": [{"id": g["id"], "icon": g["icon"], "name": g["name"],
+                      "role": g["role"], "members": len(g["members"])}
+                     for g in __import__("agents").GROUPS],
+            "last": getattr(engine, "groups_last", None),
+        },
         "profit_floor": getattr(engine, "profit_floor", 10000.0),
         "dca": engine.dca_status(),
         "mtf_enabled": True,

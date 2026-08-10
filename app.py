@@ -2148,6 +2148,71 @@ class RiskManagerAgent(Agent):
 # ======================================================================
 # ⚖️ 17 — SIZER
 # ======================================================================
+# ======================================================================
+# 👥 GRUPACIONE (grupacione) — agjentët e menaxhojnë botin në GRUPE.
+# Çdo grup ka rolin e vet; tregtia hapet VETËM kur grupet e miratojnë.
+# ======================================================================
+GROUPS = [
+    {"id": "scan",   "icon": "📡", "name": "Skanimi",
+     "role": "Të dhënat + trendi", "members": ["Scanner"]},
+    {"id": "strat",  "icon": "🎯", "name": "Strategjitë",
+     "role": "10 strategji votojnë", "members": ["Strategy"]},
+    {"id": "brain",  "icon": "🧠", "name": "Truri",
+     "role": "Trend 15m+1h, ATR, konsensus, AI", "members": ["Brain", "Consensus", "AI Predictor", "Regime"]},
+    {"id": "safety", "icon": "🛡️", "name": "Siguria",
+     "role": "Validator + Risk Manager", "members": ["Validator", "Risk"]},
+    {"id": "exec",   "icon": "⚖️", "name": "Ekzekutimi",
+     "role": "Sizer + Filler + Tracker + Learning", "members": ["Sizer", "Filler", "Tracker", "Learning"]},
+]
+GROUP_BY_NAME = {}
+for _g in GROUPS:
+    for _m in _g["members"]:
+        GROUP_BY_NAME[_m] = _g["id"]
+
+
+class GroupCoordinatorAgent(Agent):
+    step, name, icon = 3, "Groups", "👥"
+    role = "Menaxhon grupet: tregtia miratohet vetëm nga shumica e grupeve"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        if ctx.stop or not ctx.chosen:
+            return
+        sym = ctx.chosen["symbol"]
+        direction = ctx.chosen["direction"]
+        # 👥 votat e grupeve për këtë sinjal
+        approvals = []        # (id, icon, name, ok)
+        # 📡 Skanimi: të dhënat ekzistojnë dhe Brain nuk e vtoi (simboli ka vota)
+        votes = ctx.votes.get(sym, [])
+        scan_ok = len(votes) >= 3
+        approvals.append(("scan", "📡", "Skanimi", scan_ok))
+        # 🎯 Strategjitë: drejtimi mbështetet nga strategjitë
+        sup = [v for v in votes if v[1] == direction]
+        strat_ok = len(sup) >= 3
+        approvals.append(("strat", "🎯", "Strategjitë", strat_ok))
+        # 🧠 Truri: konsensusi zgjodhi këtë drejtim (ctx.chosen ekziston)
+        brain_ok = ctx.chosen.get("confidence", 0) >= 60
+        approvals.append(("brain", "🧠", "Truri", brain_ok))
+        # 🛡️ Siguria: Validator + Risk nuk e ndalën (ctx.stop False, jo locked)
+        safety_ok = not e.is_locked()
+        approvals.append(("safety", "🛡️", "Siguria", safety_ok))
+        ok_n = sum(1 for _, _, _, ok in approvals if ok)
+        need = 3   # nevojiten ≥3 nga 4 grupet vendimtare
+        if ok_n < need:
+            ctx.stop = True
+            bad = ", ".join(f"{ic} {nm}" for gid, ic, nm, ok in approvals if not ok)
+            self.report(
+                f"👥 Grupet NUK miratuan ({ok_n}/{need}): {bad} — sinjali hidhet",
+                sym, direction, ctx.chosen.get("confidence", 0))
+            return
+        ok_line = " ".join(f"{ic}✓" if ok else f"{ic}✗"
+                           for _, ic, _, ok in approvals)
+        e.groups_last = {"symbol": sym, "direction": direction,
+                         "approvals": ok_n, "need": need, "line": ok_line}
+        self.report(f"👥 Grupet miratuan ({ok_n}/{need}): {ok_line} — {sym} {direction}",
+                    sym, direction, ctx.chosen.get("confidence", 0))
+
+
 class SizerAgent(Agent):
     step, name, icon = 3, "Sizer", "⚖️"
     role = "Llogarit madhësinë e pozicionit — fiks ose komponim"
@@ -2414,7 +2479,8 @@ class LearningAgent(Agent):
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
               [BrainAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
-               ValidatorAgent, RiskManagerAgent, SizerAgent,
+               ValidatorAgent, RiskManagerAgent, GroupCoordinatorAgent,
+               SizerAgent,
                FillerAgent, TrackerAgent, LearningAgent])
 # ============ engine.py ============
 """
@@ -3730,6 +3796,12 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "turso": engine.turso_status(),
+        "groups": {
+            "defs": [{"id": g["id"], "icon": g["icon"], "name": g["name"],
+                      "role": g["role"], "members": len(g["members"])}
+                     for g in __import__("agents").GROUPS],
+            "last": getattr(engine, "groups_last", None),
+        },
         "profit_floor": getattr(engine, "profit_floor", 10000.0),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
