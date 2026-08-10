@@ -35,6 +35,13 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
+# Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
+# nivel bëhet DYSHEME: nëse equity bie nën të, mbyllen të gjitha pozicionet
+# për të mbrojtur fitimin e kyçur. Dyshemeja ngrihet vetëm lart, kurrë poshtë.
+PROFIT_LOCK_STEP_USD = 60.0      # +$60 çdo herë
+PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
+
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on
 DCA_AMOUNT = 5.0                 # USDT per buy

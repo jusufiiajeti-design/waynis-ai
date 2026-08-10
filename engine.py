@@ -27,7 +27,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
-                    EQUITY_LOCK_PAUSE_MIN,
+                    EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
+                    PROFIT_LOCK_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
@@ -35,6 +36,9 @@ from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
+from turso import (query as turso_query, exec_sql as turso_exec,
+                   batch_exec as turso_batch, enabled as turso_enabled,
+                   _creds as _turso_creds)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -90,6 +94,9 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        # 💰 dyshemeja e fitimit në shkallë $60 (ruhet në cilësimet)
+        self.profit_floor = float(settings.get("profit_floor", STARTING_BALANCE))
+        self._pl_triggered = False
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -162,16 +169,130 @@ class PaperEngine:
                     except Exception:
                         pass
             row = c.execute("SELECT * FROM account WHERE id=1").fetchone()
+            pending = []
             if not row:
                 c.execute(
                     "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?)",
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-                self._seed_history(c)
-                self._seed_equity(c)
+                self._turso_ensure_schema()
+                if not self._turso_restore(c, pending):
+                    # nuk ka histori në Turso → demo fikse (për herë të parë)
+                    self._seed_history(c)
+                    self._seed_equity(c)
+        # 🔒 ngjarjet emetohen PAS transaksionit (shmang "database is locked")
+        for etype, msg in pending:
+            self._event(etype, msg)
 
     def _conn(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        return sqlite3.connect(DB_PATH)
+        return sqlite3.connect(DB_PATH, timeout=15)
+
+    # ------------------------------------------------------------------
+    # ☁️ Turso — ruajtja përgjithmonë (databazë falas në internet)
+    # ------------------------------------------------------------------
+    def _turso_ensure_schema(self):
+        if not turso_enabled():
+            return
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS account(id INTEGER PRIMARY KEY, "
+            "balance REAL, peak REAL, started_at TEXT)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS trades(id INTEGER PRIMARY KEY, "
+            "symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL, "
+            "tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT, "
+            "pnl REAL, confidence REAL, reason TEXT, fees REAL, "
+            "bracket TEXT, votes TEXT, tp1 REAL, tp1_hit INTEGER DEFAULT 0, "
+            "partial_pnl REAL, trail_high REAL)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY "
+            "AUTOINCREMENT, ts TEXT, type TEXT, msg TEXT, symbol TEXT)")
+
+    def _turso_restore(self, c, pending=None):
+        if not turso_enabled():
+            return False
+        rows = turso_query(
+            "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
+            "closed_at,pnl,confidence,reason,fees,bracket,votes,tp1,"
+            "tp1_hit,partial_pnl,trail_high FROM trades ORDER BY id")
+        if not rows:
+            return False
+        c.execute("DELETE FROM trades")
+        for r in rows:
+            if len(r) < 21:
+                continue
+            (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+             opened_at, closed_at, pnl, confidence, reason, fees, bracket,
+             votes, tp1, tp1_hit, partial_pnl, trail_high) = r
+            c.execute(
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+                 opened_at, closed_at, pnl, confidence, reason, fees,
+                 bracket, votes, tp1, tp1_hit, partial_pnl, trail_high))
+        acct = turso_query(
+            "SELECT balance, peak, started_at FROM account WHERE id=1")
+        if acct and acct[0]:
+            bal, peak, started = acct[0]
+            c.execute(
+                "UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
+                (bal if bal is not None else STARTING_BALANCE,
+                 peak if peak is not None else STARTING_BALANCE,
+                 started or now_iso()))
+        msg = f"☁️ Historia u rikthye nga Turso ({len(rows)} tregti)"
+        if pending is not None:
+            pending.append(("sync", msg))
+        else:
+            self._event("sync", msg)
+        return True
+
+    def _turso_push_snapshot(self):
+        if not turso_enabled():
+            return
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,"
+                    "opened_at,closed_at,pnl,confidence,reason,fees,bracket,"
+                    "votes,tp1,tp1_hit,partial_pnl,trail_high FROM trades "
+                    "WHERE reason IS NULL OR reason != 'seed-history'"
+                ).fetchall()
+                bal, peak, started = c.execute(
+                    "SELECT balance, peak, started_at FROM account WHERE id=1"
+                ).fetchone()
+        except Exception:
+            return
+        if not rows and bal is None:
+            return
+        items = [
+            ("DELETE FROM trades WHERE reason IS NULL OR "
+             "reason != 'seed-history'", [])]
+        placeholders = ",".join("?" * 21)
+        for r in rows:
+            items.append((
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(" + placeholders + ")", list(r)))
+        items.append((
+            "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET balance=excluded.balance, "
+            "peak=excluded.peak, started_at=excluded.started_at",
+            [bal if bal is not None else STARTING_BALANCE,
+             peak if peak is not None else STARTING_BALANCE,
+             started or now_iso()]))
+        turso_batch(items)
+
+    def turso_status(self):
+        if not turso_enabled():
+            return {"enabled": False}
+        try:
+            u, _ = _turso_creds()
+            return {"enabled": True,
+                    "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io"}
+        except Exception:
+            return {"enabled": False}
 
     def _seed_history(self, c):
         """Seed a small realistic paper history so the dashboard feels alive.
@@ -293,6 +414,38 @@ class PaperEngine:
             return False
         acc = self.account()
         eq = acc["equity"]
+        # 💰 SHKALLA $60: dyshemeja ngrihet çdo +$60, kurrë nuk zbret.
+        # Mbrojtja fillon VETËM pasi arrihet +$60 i parë (para kësaj s'ka
+        # fitim për të mbrojtur — vetëm kapitali fillestar).
+        if PROFIT_LOCK_STEP_USD > 0:
+            rungs = int((eq - STARTING_BALANCE) // PROFIT_LOCK_STEP_USD)
+            new_floor = STARTING_BALANCE + rungs * PROFIT_LOCK_STEP_USD
+            if new_floor > self.profit_floor and new_floor > STARTING_BALANCE:
+                self.profit_floor = new_floor
+                s = _load_settings()
+                s["profit_floor"] = self.profit_floor
+                _save_settings(s)
+                self._pl_triggered = False
+                self._event(
+                    "lock",
+                    f"💰 +${PROFIT_LOCK_STEP_USD:g} u kyç! "
+                    f"Dyshemeja tani ${self.profit_floor:.2f} — fitimi nuk bie më poshtë",
+                    None)
+            if self.profit_floor > STARTING_BALANCE and eq < self.profit_floor:
+                if not getattr(self, "_pl_triggered", False):
+                    self._pl_triggered = True
+                    n = await self._close_all("profit-lock")
+                    self.lock_until = time.time() + PROFIT_LOCK_PAUSE_MIN * 60
+                    self._event(
+                        "lock",
+                        f"🔒 Mbrojtja: equity ra nën dyshemenë "
+                        f"${self.profit_floor:.2f} → u mbyllën {n} pozicione. "
+                        f"Push {PROFIT_LOCK_PAUSE_MIN} min para tregtive të reja.",
+                        None)
+                    self._set_pipeline(0, "Lock", "🔒 Profit-lock ($60) aktiv")
+                    return True
+            elif eq >= self.profit_floor:
+                self._pl_triggered = False
         with self._conn() as c:
             row = c.execute("SELECT peak FROM account WHERE id=1").fetchone()
             peak = float(row[0]) if row and row[0] else eq
@@ -690,7 +843,9 @@ class PaperEngine:
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
                  json.dumps(votes or []), tp1))
-            return cur.lastrowid
+            tid = cur.lastrowid
+        self._turso_push_snapshot()      # ☁️ ruaj përgjithmonë
+        return tid
 
     def _update_sl(self, trade_id, new_sl):
         with self._conn() as c:
@@ -724,6 +879,7 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
+        self._turso_push_snapshot()      # ☁️ fitimi i kyçur ruhet
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
@@ -873,6 +1029,9 @@ class PaperEngine:
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
             if seed:
                 self._seed_history(c)
+        # 💰 pas rivendosjes dyshemeja fillon nga e para
+        self.profit_floor = STARTING_BALANCE
+        self._pl_triggered = False
         self.equity_history = []
         self.cooldown = {}
         if reset_learning:

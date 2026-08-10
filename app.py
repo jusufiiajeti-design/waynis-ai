@@ -36,6 +36,13 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
+# Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
+# nivel bëhet DYSHEME: nëse equity bie nën të, mbyllen të gjitha pozicionet
+# për të mbrojtur fitimin e kyçur. Dyshemeja ngrihet vetëm lart, kurrë poshtë.
+PROFIT_LOCK_STEP_USD = 60.0      # +$60 çdo herë
+PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
+
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on
 DCA_AMOUNT = 5.0                 # USDT per buy
@@ -50,6 +57,134 @@ MTF_SLOW = 50                    # EMA slow period on MTF
 MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
 
 
+# ============ turso.py ============
+"""
+Waynis AI — Turso (libsql) cloud persistence.
+
+Ruajtja PËRGJITHMONË e tregtive/balancës në një databazë falas në internet.
+Përdor vetëm urllib (asnjë varësi ekstra) dhe API-në HTTP të Turso-s
+(/v2/pipeline). Nëse Turso nuk është i arritshëm, boti vazhdon lokalisht
+(offline) dhe ri-sinkronizon në goditjen tjetër të suksesshme.
+
+Kredencialet: variablat e ambientit TURSO_URL / TURSO_TOKEN (Render).
+"""
+import json
+import os
+import urllib.request
+
+
+def _creds():
+    url = (os.environ.get("TURSO_URL") or "").strip()
+    token = (os.environ.get("TURSO_TOKEN") or "").strip()
+    if not url or not token:
+        try:
+            base = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base, "turso.json"), "r", encoding="utf-8") as f:
+                d = json.load(f)
+            url = url or str(d.get("url", "")).strip()
+            token = token or str(d.get("token", "")).strip()
+        except Exception:
+            pass
+    return url, token
+
+
+def enabled():
+    u, t = _creds()
+    return bool(u and t)
+
+
+def _request(sql, args, want_rows):
+    u, t = _creds()
+    host = u.split("://", 1)[-1].rstrip("/")
+    payload = {
+        "requests": [{"type": "execute",
+                      "stmt": {"sql": sql,
+                               "args": [_cell(a) for a in (args or [])]}}],
+        "mode": "rows" if want_rows else "write",
+    }
+    req = urllib.request.Request(
+        "https://" + host + "/v2/pipeline",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": "Bearer " + t, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _val(cell):
+    """Turso kthen qeliza si {'type':..,'value':..} ose vlera të thjeshta."""
+    if isinstance(cell, dict):
+        return cell.get("value")
+    return cell
+
+
+def _cell(v):
+    """Kthen një vlerë Python në qelizën e etiketuar që kërkon API i Turso-s
+    (p.sh. "text" → {'type':'text','value':...}). Pa këtë, API kthen 400."""
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": "1" if v else "0"}
+    if isinstance(v, int):
+        # Turso (libsql HTTP) i kodon int64-t si vargje ("5", jo 5)
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, (bytes, bytearray)):
+        return {"type": "blob", "value": v.decode("utf-8", "replace")}
+    return {"type": "text", "value": str(v)}
+
+
+def query(sql, args=None):
+    """Kthen lista rreshtash (tupla) ose [] nëse dështon/pa kredenciale."""
+    if not enabled():
+        return []
+    try:
+        out = _request(sql, args, True)
+    except Exception:
+        return []
+    rows = []
+    for res in out.get("results", []):
+        if res.get("type") != "ok":
+            continue
+        rr = res.get("response", {}).get("result", {})
+        for row in rr.get("rows", []):
+            if isinstance(row, dict) and "row" in row:
+                row = row["row"]
+            rows.append(tuple(_val(c) for c in row))
+    return rows
+
+
+def exec_sql(sql, args=None):
+    """Ekzekuton një INSERT/UPDATE/DELETE/DDL. True nëse shkoi mirë."""
+    if not enabled():
+        return False
+    try:
+        _request(sql, args, False)
+        return True
+    except Exception:
+        return False
+
+
+def batch_exec(items):
+    """Ekzekuton shumë deklarata në NJË kërkesë HTTP (pipeline)."""
+    if not enabled() or not items:
+        return False
+    u, t = _creds()
+    host = u.split("://", 1)[-1].rstrip("/")
+    reqs = [{"type": "execute",
+             "stmt": {"sql": s, "args": [_cell(x) for x in (a or [])]}}
+            for s, a in items]
+    payload = {"requests": reqs, "mode": "write"}
+    try:
+        req = urllib.request.Request(
+            "https://" + host + "/v2/pipeline",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": "Bearer " + t,
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return True
+    except Exception:
+        return False
 # ============ providers.py ============
 """
 Price data providers for the Waynis AI paper-trading bot.
@@ -2187,7 +2322,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
-                    EQUITY_LOCK_PAUSE_MIN,
+                    EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
+                    PROFIT_LOCK_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
@@ -2195,6 +2331,9 @@ from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
+from turso import (query as turso_query, exec_sql as turso_exec,
+                   batch_exec as turso_batch, enabled as turso_enabled,
+                   _creds as _turso_creds)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -2250,6 +2389,9 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
+        # 💰 dyshemeja e fitimit në shkallë $60 (ruhet në cilësimet)
+        self.profit_floor = float(settings.get("profit_floor", STARTING_BALANCE))
+        self._pl_triggered = False
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -2322,16 +2464,130 @@ class PaperEngine:
                     except Exception:
                         pass
             row = c.execute("SELECT * FROM account WHERE id=1").fetchone()
+            pending = []
             if not row:
                 c.execute(
                     "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?)",
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-                self._seed_history(c)
-                self._seed_equity(c)
+                self._turso_ensure_schema()
+                if not self._turso_restore(c, pending):
+                    # nuk ka histori në Turso → demo fikse (për herë të parë)
+                    self._seed_history(c)
+                    self._seed_equity(c)
+        # 🔒 ngjarjet emetohen PAS transaksionit (shmang "database is locked")
+        for etype, msg in pending:
+            self._event(etype, msg)
 
     def _conn(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        return sqlite3.connect(DB_PATH)
+        return sqlite3.connect(DB_PATH, timeout=15)
+
+    # ------------------------------------------------------------------
+    # ☁️ Turso — ruajtja përgjithmonë (databazë falas në internet)
+    # ------------------------------------------------------------------
+    def _turso_ensure_schema(self):
+        if not turso_enabled():
+            return
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS account(id INTEGER PRIMARY KEY, "
+            "balance REAL, peak REAL, started_at TEXT)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS trades(id INTEGER PRIMARY KEY, "
+            "symbol TEXT, side TEXT, entry REAL, exit REAL, qty REAL, "
+            "tp REAL, sl REAL, status TEXT, opened_at TEXT, closed_at TEXT, "
+            "pnl REAL, confidence REAL, reason TEXT, fees REAL, "
+            "bracket TEXT, votes TEXT, tp1 REAL, tp1_hit INTEGER DEFAULT 0, "
+            "partial_pnl REAL, trail_high REAL)")
+        turso_exec(
+            "CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY "
+            "AUTOINCREMENT, ts TEXT, type TEXT, msg TEXT, symbol TEXT)")
+
+    def _turso_restore(self, c, pending=None):
+        if not turso_enabled():
+            return False
+        rows = turso_query(
+            "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,opened_at,"
+            "closed_at,pnl,confidence,reason,fees,bracket,votes,tp1,"
+            "tp1_hit,partial_pnl,trail_high FROM trades ORDER BY id")
+        if not rows:
+            return False
+        c.execute("DELETE FROM trades")
+        for r in rows:
+            if len(r) < 21:
+                continue
+            (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+             opened_at, closed_at, pnl, confidence, reason, fees, bracket,
+             votes, tp1, tp1_hit, partial_pnl, trail_high) = r
+            c.execute(
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, symbol, side, entry, exit_px, qty, tp, sl, status,
+                 opened_at, closed_at, pnl, confidence, reason, fees,
+                 bracket, votes, tp1, tp1_hit, partial_pnl, trail_high))
+        acct = turso_query(
+            "SELECT balance, peak, started_at FROM account WHERE id=1")
+        if acct and acct[0]:
+            bal, peak, started = acct[0]
+            c.execute(
+                "UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
+                (bal if bal is not None else STARTING_BALANCE,
+                 peak if peak is not None else STARTING_BALANCE,
+                 started or now_iso()))
+        msg = f"☁️ Historia u rikthye nga Turso ({len(rows)} tregti)"
+        if pending is not None:
+            pending.append(("sync", msg))
+        else:
+            self._event("sync", msg)
+        return True
+
+    def _turso_push_snapshot(self):
+        if not turso_enabled():
+            return
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT id,symbol,side,entry,exit,qty,tp,sl,status,"
+                    "opened_at,closed_at,pnl,confidence,reason,fees,bracket,"
+                    "votes,tp1,tp1_hit,partial_pnl,trail_high FROM trades "
+                    "WHERE reason IS NULL OR reason != 'seed-history'"
+                ).fetchall()
+                bal, peak, started = c.execute(
+                    "SELECT balance, peak, started_at FROM account WHERE id=1"
+                ).fetchone()
+        except Exception:
+            return
+        if not rows and bal is None:
+            return
+        items = [
+            ("DELETE FROM trades WHERE reason IS NULL OR "
+             "reason != 'seed-history'", [])]
+        placeholders = ",".join("?" * 21)
+        for r in rows:
+            items.append((
+                "INSERT INTO trades(id,symbol,side,entry,exit,qty,tp,sl,"
+                "status,opened_at,closed_at,pnl,confidence,reason,fees,"
+                "bracket,votes,tp1,tp1_hit,partial_pnl,trail_high) "
+                "VALUES(" + placeholders + ")", list(r)))
+        items.append((
+            "INSERT INTO account(id,balance,peak,started_at) VALUES(1,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET balance=excluded.balance, "
+            "peak=excluded.peak, started_at=excluded.started_at",
+            [bal if bal is not None else STARTING_BALANCE,
+             peak if peak is not None else STARTING_BALANCE,
+             started or now_iso()]))
+        turso_batch(items)
+
+    def turso_status(self):
+        if not turso_enabled():
+            return {"enabled": False}
+        try:
+            u, _ = _turso_creds()
+            return {"enabled": True,
+                    "db": u.split("://", 1)[-1].split(".")[0] + ".turso.io"}
+        except Exception:
+            return {"enabled": False}
 
     def _seed_history(self, c):
         """Seed a small realistic paper history so the dashboard feels alive.
@@ -2453,6 +2709,38 @@ class PaperEngine:
             return False
         acc = self.account()
         eq = acc["equity"]
+        # 💰 SHKALLA $60: dyshemeja ngrihet çdo +$60, kurrë nuk zbret.
+        # Mbrojtja fillon VETËM pasi arrihet +$60 i parë (para kësaj s'ka
+        # fitim për të mbrojtur — vetëm kapitali fillestar).
+        if PROFIT_LOCK_STEP_USD > 0:
+            rungs = int((eq - STARTING_BALANCE) // PROFIT_LOCK_STEP_USD)
+            new_floor = STARTING_BALANCE + rungs * PROFIT_LOCK_STEP_USD
+            if new_floor > self.profit_floor and new_floor > STARTING_BALANCE:
+                self.profit_floor = new_floor
+                s = _load_settings()
+                s["profit_floor"] = self.profit_floor
+                _save_settings(s)
+                self._pl_triggered = False
+                self._event(
+                    "lock",
+                    f"💰 +${PROFIT_LOCK_STEP_USD:g} u kyç! "
+                    f"Dyshemeja tani ${self.profit_floor:.2f} — fitimi nuk bie më poshtë",
+                    None)
+            if self.profit_floor > STARTING_BALANCE and eq < self.profit_floor:
+                if not getattr(self, "_pl_triggered", False):
+                    self._pl_triggered = True
+                    n = await self._close_all("profit-lock")
+                    self.lock_until = time.time() + PROFIT_LOCK_PAUSE_MIN * 60
+                    self._event(
+                        "lock",
+                        f"🔒 Mbrojtja: equity ra nën dyshemenë "
+                        f"${self.profit_floor:.2f} → u mbyllën {n} pozicione. "
+                        f"Push {PROFIT_LOCK_PAUSE_MIN} min para tregtive të reja.",
+                        None)
+                    self._set_pipeline(0, "Lock", "🔒 Profit-lock ($60) aktiv")
+                    return True
+            elif eq >= self.profit_floor:
+                self._pl_triggered = False
         with self._conn() as c:
             row = c.execute("SELECT peak FROM account WHERE id=1").fetchone()
             peak = float(row[0]) if row and row[0] else eq
@@ -2850,7 +3138,9 @@ class PaperEngine:
                  sig["tp"], sig["sl"], "open", now_iso(), sig["confidence"],
                  json.dumps(bracket) if bracket else None,
                  json.dumps(votes or []), tp1))
-            return cur.lastrowid
+            tid = cur.lastrowid
+        self._turso_push_snapshot()      # ☁️ ruaj përgjithmonë
+        return tid
 
     def _update_sl(self, trade_id, new_sl):
         with self._conn() as c:
@@ -2884,6 +3174,7 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
+        self._turso_push_snapshot()      # ☁️ fitimi i kyçur ruhet
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
@@ -3033,6 +3324,9 @@ class PaperEngine:
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
             if seed:
                 self._seed_history(c)
+        # 💰 pas rivendosjes dyshemeja fillon nga e para
+        self.profit_floor = STARTING_BALANCE
+        self._pl_triggered = False
         self.equity_history = []
         self.cooldown = {}
         if reset_learning:
@@ -3304,6 +3598,8 @@ async def status():
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
+        "turso": engine.turso_status(),
+        "profit_floor": getattr(engine, "profit_floor", 10000.0),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {

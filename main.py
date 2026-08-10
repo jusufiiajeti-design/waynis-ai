@@ -236,6 +236,8 @@ async def status():
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
+        "turso": engine.turso_status(),
+        "profit_floor": getattr(engine, "profit_floor", 10000.0),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
