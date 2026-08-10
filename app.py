@@ -1732,7 +1732,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 3:     # rihyrje ekstreme e shpejtë
+            if sym in e.cooldown and now - e.cooldown[sym] < 1:     # rihyrje MENJËHERËSH (1s) — qarkullim maksimal
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
