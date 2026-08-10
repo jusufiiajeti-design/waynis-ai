@@ -3,7 +3,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
-SCAN_BATCH = 60                 # skanon të GJITHA monedhat çdo cikël (52+ → 60)
+SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
 TAKE_PROFIT = 0.020             # +2.0% TP — fitim më i madh (testuar: WR 67%, +$6.33/tregti)
@@ -261,6 +261,22 @@ WATCHLIST = [
     ("RENDER-USDT", None, None),
     ("AR-USDT", None, None),
     ("PYTH-USDT", None, None),
+    # 🚀 më shumë monedha likuide → më shumë pozicione MR njëkohësisht
+    ("XLM-USDT", None, None),
+    ("BCH-USDT", None, None),
+    ("EOS-USDT", None, None),
+    ("ZEC-USDT", None, None),
+    ("DASH-USDT", None, None),
+    ("VET-USDT", None, None),
+    ("ICP-USDT", None, None),
+    ("APE-USDT", None, None),
+    ("GALA-USDT", None, None),
+    ("CHZ-USDT", None, None),
+    ("1INCH-USDT", None, None),
+    ("SNX-USDT", None, None),
+    ("COMP-USDT", None, None),
+    ("ENS-USDT", None, None),
+    ("FLOW-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
