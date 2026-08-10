@@ -238,6 +238,7 @@ async def status():
         "lock": engine.lock_info(),
         "turso": engine.turso_status(),
         "turnover": getattr(engine, "turnover", None),
+        "probability": getattr(engine, "prob_last", None),
         "groups": {
             "defs": [{"id": g["id"], "icon": g["icon"], "name": g["name"],
                       "role": g["role"], "members": len(g["members"])}

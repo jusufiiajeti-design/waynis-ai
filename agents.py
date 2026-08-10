@@ -45,7 +45,7 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TRAIL_PCT, RUNNER_BE, REL_STRENGTH_BOOST,
                     MTF_ENABLED, MTF_BAR, MTF_FAST, MTF_SLOW, MTF_CACHE_TTL)
 from providers import WATCHLIST
-from strategies import STRATEGIES, vol_ratio, rsi, ema
+from strategies import STRATEGIES, vol_ratio, rsi, ema, macd
 from learning import (aggregate_from_trades, meta_threshold,
                       system_win_rate, save_history,
                       DEFAULT_STATS, META_WINDOW, HISTORY_MAX)
@@ -91,6 +91,7 @@ class CycleContext:
         self.trade_id = None
         self.stop = False
         self.picks = []            # 🚗 TË GJITHË kandidatët (rradhë)
+        self.probability = {}      # 📊 sym -> (gjasat LONG, gjasat SHORT) 0-100
 
     def advance(self):
         """🚗 Kalon te kandidati tjetër në radhë — kur një agjent veton,
@@ -271,6 +272,90 @@ class BrainAgent(Agent):
 
 
 
+# ======================================================================
+# 📊 ANALIZUESI I PROBABILITETIT — analizon ÇDO aset me kujdes dhe
+# llogarit gjasat për BUY dhe SELL (0-100). Përdor 7 faktorë:
+# trend 1h, dakordësi 15m, EMA20/50 në 5m, RSI, MACD, momentum, volum.
+# Hyn VETËM kur gjasat ≥ 65 në një drejtim (dhe më të mëdha se e kundërta).
+# ======================================================================
+class ProbabilityAgent(Agent):
+    step, name, icon = 1, "Probability", "📊"
+    role = "Analizon çdo aset: llogarit gjasat për BUY dhe SELL (7 faktorë), hyn vetëm me gjasë të madhe"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        brain = getattr(e, "brain_cache", {})
+        now = time.time()
+        probs = {}
+        for sym in list(ctx.votes.keys()):
+            kl = ctx.candles.get(sym)
+            if not kl or len(kl) < 40:
+                continue
+            closes = [c["c"] for c in kl]
+            price = closes[-1]
+            # ---- bazë 50 + faktorët ----
+            lp = 50.0; sp = 50.0
+            # 1) trend 1h (nga Brain cache)
+            info = brain.get(sym)
+            if info and now - info[0] < 600:
+                trend_long, atr_pct, why, dual_ok = info[1]
+            else:
+                trend_long, atr_pct, dual_ok = None, 0.3, True
+            if trend_long is not None:
+                if trend_long: lp += 18
+                else: sp += 18
+                # 2) dakordësi 15m
+                if dual_ok:
+                    if trend_long: lp += 12
+                    else: sp += 12
+                else:
+                    if trend_long: sp += 8
+                    else: lp += 8
+            # 3) EMA20 vs EMA50 (5m)
+            if len(closes) >= 50:
+                e20 = ema(closes, 20)[-1]; e50 = ema(closes, 50)[-1]
+                if e20 > e50: lp += 10
+                else: sp += 10
+            # 4) RSI zonë
+            r = rsi(closes)
+            if 52 <= r <= 66: lp += 8
+            elif r >= 74: sp += 6; lp -= 4
+            elif 34 <= r <= 48: sp += 8
+            elif r <= 26: lp += 6; sp -= 4
+            # 5) MACD
+            try:
+                line, sig = macd(closes)
+                if line > sig: lp += 7
+                else: sp += 7
+            except Exception:
+                pass
+            # 6) momentum (2 qirinj të fundit)
+            if len(closes) >= 3:
+                m1 = closes[-1] - closes[-2]; m2 = closes[-2] - closes[-3]
+                if m1 > 0 and m2 > 0: lp += 5
+                elif m1 < 0 and m2 < 0: sp += 5
+            # 7) volum
+            vols = [c["v"] for c in kl]
+            if len(vols) >= 21:
+                avg = sum(vols[-21:-1]) / 20
+                if avg > 0 and vols[-1] > avg * 1.2:
+                    if closes[-1] > closes[-2]: lp += 5
+                    else: sp += 5
+            lp = max(5, min(95, lp)); sp = max(5, min(95, sp))
+            probs[sym] = (round(lp), round(sp))
+        ctx.probability = probs
+        e.prob_last = probs
+        if probs:
+            best = max(probs.items(),
+                       key=lambda kv: max(kv[1]))
+            bsym, (blp, bsp) = best
+            self.report(
+                f"📊 {bsym}: BUY {blp}% · SELL {bsp}% — "
+                f"{len(probs)} asete të analizuara me 7 faktorë",
+                bsym, "LONG" if blp >= bsp else "SHORT",
+                max(blp, bsp))
+
+
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
     role = "Kombinon votat e 10 strategjive me peshat e mësuara"
@@ -302,6 +387,20 @@ class ConsensusAgent(Agent):
                           if d == direction]
             if len(supporting) < 2:              # duhen ≥2 strategji (më shumë tregti — kërkesa)
                 continue
+            # 📊 PORTA E PROBABILITETIT: hyn vetëm kur gjasat ≥ 65 për këtë
+            # drejtim (dhe më të mëdha se drejtimi i kundërt) — analiza e
+            # kujdesshme për çdo aset, siç kërkoi përdoruesi.
+            prob = ctx.probability.get(sym)
+            if prob:
+                lp, sp = prob
+                if direction == "LONG" and lp < 65:
+                    continue
+                if direction == "SHORT" and sp < 65:
+                    continue
+                if direction == "LONG" and lp <= sp:
+                    continue
+                if direction == "SHORT" and sp <= lp:
+                    continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
             if REL_STRENGTH_BOOST and rms is not None and sym in rms:
@@ -1023,7 +1122,7 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([OrganizerAgent, ScannerAgent] + STRATEGY_AGENTS +
-              [BrainAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
+              [BrainAgent, ProbabilityAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
                ValidatorAgent, RiskManagerAgent, GroupCoordinatorAgent,
                SizerAgent,
                FillerAgent, TrackerAgent, LearningAgent])
