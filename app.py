@@ -1213,18 +1213,12 @@ def mean_reversion(symbol, k, ticker):
     return None
 
 
+# 🎯 VETËM MEAN REVERSION — të gjitha strategjitë e tjera U FSHIËN
+# (kërkesa e përdoruesit). Kjo është strategjia e vetme aktive:
+# RSI < 40 → BUY (i mbishitur, kthehet lart) · RSI > 60 → SELL
+# (i mbingarkuar, kthehet poshtë) · TP 2.0% / SL 1.5% · testuar pozitiv.
 STRATEGIES = [
     {"name": "Mean Reversion",   "icon": "🎯", "fn": mean_reversion},
-    {"name": "EMA Trend",        "icon": "📈", "fn": ema_trend},
-    {"name": "RSI Reversal",     "icon": "🔄", "fn": rsi_reversal},
-    {"name": "MACD Momentum",    "icon": "🌊", "fn": macd_momentum},
-    {"name": "Bollinger Break",  "icon": "🎈", "fn": bollinger_breakout},
-    {"name": "Stochastic",       "icon": "⚡", "fn": stochastic_cross},
-    {"name": "Volume Spike",     "icon": "🔊", "fn": volume_spike},
-    {"name": "ATR Channel",      "icon": "📏", "fn": atr_channel},
-    {"name": "Donchian Break",   "icon": "🚀", "fn": donchian_breakout},
-    {"name": "ROC Momentum",     "icon": "🏎️", "fn": roc_momentum},
-    {"name": "Slow Trend",       "icon": "🐢", "fn": slow_trend},
 ]
 # ============ learning.py ============
 """
