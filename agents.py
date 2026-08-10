@@ -92,6 +92,7 @@ class CycleContext:
         self.stop = False
         self.picks = []            # 🚗 TË GJITHË kandidatët (rradhë)
         self.probability = {}      # 📊 sym -> (gjasat LONG, gjasat SHORT) 0-100
+        self.mr_only = True        # 🎯 vetëm Mean Reversion
 
     def advance(self):
         """🚗 Kalon te kandidati tjetër në radhë — kur një agjent veton,
@@ -190,7 +191,11 @@ def _make_strategy(entry):
                  "role": "Strategji — voton LONG/SHORT me konfidencë"})
 
 
-STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
+# 🎯 VETËM MEAN REVERSION: strategjia e vetme aktive (e testuar fitimprurëse).
+# Strategjitë e tjera janë ndalur me kërkesë të përdoruesit.
+MR_ONLY = True
+STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES
+                   if not MR_ONLY or s["name"] == "Mean Reversion"]
 
 
 # ======================================================================
@@ -385,7 +390,9 @@ class ConsensusAgent(Agent):
                 continue
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
-            if len(supporting) < 2:              # duhen ≥2 strategji (më shumë tregti — kërkesa)
+            # 🎯 MR-only: mjafton 1 strategji (Mean Reversion) në dakordësi
+            min_support = 1 if getattr(ctx, "mr_only", False) else 2
+            if len(supporting) < min_support:
                 continue
             # 📊 PORTA E PROBABILITETIT: hyn vetëm kur gjasat ≥ 65 për këtë
             # drejtim (dhe më të mëdha se drejtimi i kundërt) — analiza e
