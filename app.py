@@ -2735,7 +2735,12 @@ class PaperEngine:
                     f"💰 +${PROFIT_LOCK_STEP_USD:g} u kyç! "
                     f"Dyshemeja tani ${self.profit_floor:.2f} — fitimi nuk bie më poshtë",
                     None)
-            if self.profit_floor > STARTING_BALANCE and eq < self.profit_floor:
+            # 🔒 Mbrojtja mbyll VETËM kur ka FITIM për të mbrojtur:
+            # nëse equity është NËN dyshemenë (pra në humbje nga fillimi),
+            # s'mbyll asgjë — e lë botin të tregtojë që të rikuperojë.
+            if eq >= self.profit_floor:
+                self._pl_triggered = False
+            elif self.profit_floor > STARTING_BALANCE:
                 if not getattr(self, "_pl_triggered", False):
                     self._pl_triggered = True
                     n = await self._close_all("profit-lock")
@@ -2748,8 +2753,6 @@ class PaperEngine:
                         None)
                     self._set_pipeline(0, "Lock", "🔒 Profit-lock ($60) aktiv")
                     return True
-            elif eq >= self.profit_floor:
-                self._pl_triggered = False
         with self._conn() as c:
             row = c.execute("SELECT peak FROM account WHERE id=1").fetchone()
             peak = float(row[0]) if row and row[0] else eq
