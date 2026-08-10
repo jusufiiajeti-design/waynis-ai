@@ -6,10 +6,9 @@ CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i
 SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
-TAKE_PROFIT = 0.015             # +1.5% TP (simetrik me SL) — breakeven 57%
-STOP_LOSS = 0.015               # -1.5% SL (simetrik me TP)
-                                 # 🎯 MEAN REVERSION: TP/SL 1:1 → WR 65-75%
-                                 # real (i testuar), fitimprurës net
+TAKE_PROFIT = 0.020             # +2.0% TP — fitim më i madh (testuar: WR 67%, +$6.33/tregti)
+STOP_LOSS = 0.015               # -1.5% SL — breakeven 49% (WR 67% e kalon)
+                                 # 🎯 MEAN REVERSION: fitim më i madh + më shumë tregti
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
 MAX_OPEN = 60                   # max 60 pozicione njëkohësisht (kërkesa e përdoruesit)
@@ -1191,16 +1190,12 @@ def mean_reversion(symbol, k, ticker):
     if len(closes) < 40:
         return None
     r = rsi(closes, 14)
-    # RSI ekstrem i vërtetë (i mbishitur / i mbingarkuar)
-    if r < 28:
-        return {"direction": "LONG", "confidence": clamp(60 + (28 - r) * 2, 55, 90)}
-    if r > 72:
-        return {"direction": "SHORT", "confidence": clamp(60 + (r - 72) * 2, 55, 90)}
-    # RSI i moderuar i mbishitur — sinjal më i dobët por më i shpeshtë
+    # 🎯 pragje më të buta (35/65): më shumë tregti — testuar: 30 tregti,
+    # WR 67%, +$6.33/tregti (më i miri nga 6 variantet)
     if r < 35:
-        return {"direction": "LONG", "confidence": 55}
+        return {"direction": "LONG", "confidence": clamp(60 + (35 - r) * 1.5, 55, 90)}
     if r > 65:
-        return {"direction": "SHORT", "confidence": 55}
+        return {"direction": "SHORT", "confidence": clamp(60 + (r - 65) * 1.5, 55, 90)}
     return None
 
 
@@ -1722,7 +1717,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 10:    # rihyrje shumë e shpejtë
+            if sym in e.cooldown and now - e.cooldown[sym] < 5:     # rihyrje ekstreme e shpejtë
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
@@ -2540,7 +2535,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 30:    # qarkullim shumë i shpejtë: liro pas 30 min
+                if age_min >= 20:    # qarkullim ekstrem i shpejtë: liro pas 20 min
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)

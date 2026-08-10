@@ -144,7 +144,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 10:    # rihyrje shumë e shpejtë
+            if sym in e.cooldown and now - e.cooldown[sym] < 5:     # rihyrje ekstreme e shpejtë
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
@@ -962,7 +962,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 30:    # qarkullim shumë i shpejtë: liro pas 30 min
+                if age_min >= 20:    # qarkullim ekstrem i shpejtë: liro pas 20 min
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
