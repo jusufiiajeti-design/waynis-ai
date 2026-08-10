@@ -237,6 +237,7 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "turso": engine.turso_status(),
+        "turnover": getattr(engine, "turnover", None),
         "groups": {
             "defs": [{"id": g["id"], "icon": g["icon"], "name": g["name"],
                       "role": g["role"], "members": len(g["members"])}

@@ -2171,6 +2171,67 @@ for _g in GROUPS:
         GROUP_BY_NAME[_m] = _g["id"]
 
 
+# ======================================================================
+# 🎯 ORGANIZATORI I AGJENTËVE — drejton botin dhe përshpejton qarkullimin.
+# 1) Riorganizon ciklin: nëse ka vende të lira, heq cooldown-in e monedhave
+#    që u mbyllën kohët e fundit → kapitali rihyn menjëherë në tregti.
+# 2) Menaxhon grupet: mbledh gjendjen e tyre dhe përcakton prioritetet.
+# 3) Raporton statistikat e qarkullimit (tregti/cikël, koha mesatare e mbajtjes).
+# ======================================================================
+class OrganizerAgent(Agent):
+    step, name, icon = 0, "Organizator", "🎯"
+    role = "Drejton botin: përshpejton qarkullimin, heq cooldown kur ka vende, koordinon grupet"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        open_pos = e.open_positions()
+        n_open = len(open_pos)
+        max_open = MAX_OPEN
+        free = max_open - n_open
+
+        # 💨 QARKULLIM I SHPEJTË: nëse ka ≥3 vende të lira, heq cooldown-in
+        # e monedhave që u mbyllën më shumë se 30 sekonda më parë → ato mund
+        # të rihyjnë menjëherë në të njëjtin cikël.
+        if free >= 3:
+            now = time.time()
+            reaper = [sym for sym, ts in list(e.cooldown.items())
+                      if now - ts >= 30]
+            for sym in reaper:
+                del e.cooldown[sym]
+            if reaper:
+                self.report(
+                    f"🎯 Qarkullim i shpejtë: {len(reaper)} monedha u liruan "
+                    f"nga cooldown — {free} vende të lira për rihyrje",
+                    None, None, None)
+
+        # 📊 statistikat e qarkullimit (për panelin)
+        try:
+            with e._conn() as c:
+                rows = c.execute(
+                    "SELECT opened_at, closed_at FROM trades "
+                    "WHERE status!='open' AND closed_at IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 20").fetchall()
+            import datetime as _dt
+            ages = []
+            for o, cl in rows:
+                try:
+                    t0 = _dt.datetime.fromisoformat(o).timestamp()
+                    t1 = _dt.datetime.fromisoformat(cl).timestamp()
+                    ages.append((t1 - t0) / 60.0)
+                except Exception:
+                    pass
+            avg_hold = round(sum(ages) / len(ages), 1) if ages else None
+            e.turnover = {"open": n_open, "free": free,
+                          "avg_hold_min": avg_hold,
+                          "last_20_closed": len(rows)}
+        except Exception:
+            pass
+        self.report(
+            f"🎯 Organizatori: {n_open}/{max_open} pozicione · {free} vende "
+            f"të lira · cikli gati për riqarkullim",
+            None, None, None)
+
+
 class GroupCoordinatorAgent(Agent):
     step, name, icon = 3, "Groups", "👥"
     role = "Menaxhon grupet: tregtia miratohet vetëm nga shumica e grupeve"
@@ -2488,7 +2549,7 @@ class LearningAgent(Agent):
 # ======================================================================
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
-ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
+ALL_AGENTS = ([OrganizerAgent, ScannerAgent] + STRATEGY_AGENTS +
               [BrainAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
                ValidatorAgent, RiskManagerAgent, GroupCoordinatorAgent,
                SizerAgent,
@@ -3807,6 +3868,7 @@ async def status():
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
         "turso": engine.turso_status(),
+        "turnover": getattr(engine, "turnover", None),
         "groups": {
             "defs": [{"id": g["id"], "icon": g["icon"], "name": g["name"],
                       "role": g["role"], "members": len(g["members"])}

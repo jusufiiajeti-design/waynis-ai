@@ -841,6 +841,10 @@ function renderGroupsLine(){
   if(last){
     txt += ` &nbsp;→&nbsp; <b>${last.line}</b> (${last.approvals}/${last.need}) ${last.symbol} ${last.direction}`;
   }
+  const to = (S.status&&S.status.turnover);
+  if(to){
+    txt += ` &nbsp;·&nbsp; 💨 Qarkullimi: ${to.open}/${to.open+to.free} poz · mbajtja ~${to.avg_hold_min!=null?to.avg_hold_min:"—"} min`;
+  }
   el.innerHTML = `👥 <b>Grupacionet:</b> ` + txt;
 }
 function renderAgentsGrid(agents){
