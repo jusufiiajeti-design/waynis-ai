@@ -3,7 +3,9 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 4               # coordinator cycle period
 SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
-TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
+TRADE_RISK = 0.0010             # ~$10 risk SL/tregti me $10k (0.1%) — ulur nga $75
+                                 # (kërkesa e përdoruesit): humbje totale ~$15 me tarifat,
+                                 # e vogël edhe me 60 pozicione
 TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
