@@ -1698,7 +1698,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 20:    # rihyrje e shpejtë
+            if sym in e.cooldown and now - e.cooldown[sym] < 10:    # rihyrje shumë e shpejtë
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
@@ -1855,7 +1855,7 @@ class ConsensusAgent(Agent):
                 continue
             supporting = [sname for sname, d, _ in votes
                           if d == direction]
-            if len(supporting) < 3:              # 🧠 duhen ≥3 strategji bashkë (sinjal më cilësor)
+            if len(supporting) < 2:              # duhen ≥2 strategji (më shumë tregti — kërkesa)
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
@@ -2418,7 +2418,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 60:
+                if age_min >= 45:    # qarkullim më i shpejtë: liro pas 45 min
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
@@ -2459,6 +2459,16 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        # 🎁 FITORE E SHPEJTË E KYÇUR: në +0.5% shet 50% të pozicionit dhe
+        # e kyç atë fitim — win rate rritet dhe kapitali qarkullon menjëherë;
+        # pjesa tjetër vazhdon me trailing (fitim më i madh nëse tregu ecën).
+        if not hit_tp and not hit_sl and not pos.get("tp1_hit"):
+            if side == "LONG":
+                pnl_pct = (price - pos["entry"]) / pos["entry"]
+            else:
+                pnl_pct = (pos["entry"] - price) / pos["entry"]
+            if pnl_pct >= TP1_PARTIAL:
+                e._sell_partial(pos, price)
         if not hit_tp and not hit_sl:
             # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.5%, SL ngrihet
             # pas çmimit (0.5% poshtë majës) — fitimet kyçen shpejt dhe
