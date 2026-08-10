@@ -1586,6 +1586,7 @@ rewards the strategies that voted correctly — so the bot gets better
 over time.
 """
 import asyncio
+import datetime
 import json
 import os
 import time
@@ -2331,6 +2332,16 @@ class TrackerAgent(Agent):
 
             if side != "LONG" or not ENABLE_PARTIAL_TP or not pos.get("tp1"):
                 # classic symmetric handling (SHORT or partial off)
+                # ⏱️ TIME-STOP: pas 60 minutash liro kapitalin — me fitim e
+                # mbyll me fitimin aktual, pa fitim me humbje të vogël.
+                try:
+                    opened = datetime.datetime.fromisoformat(pos["opened_at"]).timestamp()
+                    age_min = (time.time() - opened) / 60.0
+                except Exception:
+                    age_min = 0.0
+                if age_min >= 60:
+                    await e._close_trade(pos, price, "time")
+                    continue
                 await self._track_classic(e, pos, price)
                 continue
 
@@ -2370,11 +2381,11 @@ class TrackerAgent(Agent):
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
         if not hit_tp and not hit_sl:
-            # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.8%, SL ngrihet
-            # pas çmimit (0.6% poshtë majës) — nëse tregu kthehet, mbyll me
-            # fitim të mirë në vend që të presë TP-në dhe të kthehet në humbje.
-            trail_on = 0.008
-            trail_dist = 0.006
+            # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.5%, SL ngrihet
+            # pas çmimit (0.5% poshtë majës) — fitimet kyçen shpejt dhe
+            # kapitali qarkullon më shpejt (kërkesa e përdoruesit).
+            trail_on = 0.005
+            trail_dist = 0.005
             if side == "LONG":
                 pnl_pct = (price - pos["entry"]) / pos["entry"]
                 if pnl_pct >= trail_on:
