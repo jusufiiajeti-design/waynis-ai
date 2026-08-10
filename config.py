@@ -10,7 +10,7 @@ STOP_LOSS = 0.015               # -1.5% SL — breakeven 49% (WR 67% e kalon)
                                  # 🎯 MEAN REVERSION: fitim më i madh + më shumë tregti
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 60                   # max 60 pozicione njëkohësisht (kërkesa e përdoruesit)
+MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
 
 # ---- real money (spot, LONG-only) ----
 FEE_RATE = 0.001                # 0.1% per side (taker) — also simulated in paper

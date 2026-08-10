@@ -969,7 +969,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 15:    # qarkullim ekstrem i shpejtë: liro pas 15 min
+                if age_min >= 90:    # MR pret kthimin (testuar: time-stop i shkurtër dëmton WR)
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
