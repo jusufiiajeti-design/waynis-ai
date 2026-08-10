@@ -90,6 +90,17 @@ class CycleContext:
         self.qty = 0.0
         self.trade_id = None
         self.stop = False
+        self.picks = []            # 🚗 TË GJITHË kandidatët (rradhë)
+
+    def advance(self):
+        """🚗 Kalon te kandidati tjetër në radhë — kur një agjent veton,
+        nuk vdes i gjithë cikli; provohet sinjali tjetër i lidhur."""
+        if self.picks:
+            self.chosen = self.picks.pop(0)
+            self.votes_for_trade = self.chosen.get("supporting", [])
+            return True
+        self.chosen = None
+        return False
 
 
 class Agent:
@@ -325,7 +336,10 @@ class ConsensusAgent(Agent):
             return
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
-        best = candidates[0]
+        # 🚗 rradha e kandidatëve — deri në 6 për cikël; nëse një votohet
+        # poshtë, provohet tjetri (vazhdimësia e sinjaleve të lidhura)
+        ctx.picks = candidates[:6]
+        best = ctx.picks.pop(0)
         ctx.chosen = best
         ctx.votes_for_trade = best["supporting"]
         self.report(
@@ -333,7 +347,7 @@ class ConsensusAgent(Agent):
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
             f"(net {best['score']:+.2f}, prag {threshold:.2f})"
             f"{best.get('rms_note', '')} · mbështesin: "
-            f"{', '.join(best['supporting'][:4])}",
+            f"{', '.join(best['supporting'][:4])} · {len(ctx.picks)} të tjera",
             best["symbol"], best["direction"], best["confidence"])
 
     @staticmethod
@@ -498,13 +512,15 @@ class ValidatorAgent(Agent):
             if r > 85 or r < 15:
                 self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
                             best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
+                if not ctx.advance():          # 🚗 provo sinjalin tjetër të lidhur
+                    ctx.stop = True
                 return
             mom = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] else 0
             if abs(mom) > 0.008:
                 self.report(f"{best['symbol']}: lëvizje shumë e shpejtë — anashkalohet",
                             best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
+                if not ctx.advance():
+                    ctx.stop = True
                 return
 
         # AI veto
@@ -517,7 +533,8 @@ class ValidatorAgent(Agent):
             self.report(f"{best['symbol']}: VETO nga AI — AI sheh "
                         f"{verdict['verdict']} {verdict['confidence']}%",
                         best["symbol"], best["direction"], best["confidence"])
-            ctx.stop = True
+            if not ctx.advance():
+                ctx.stop = True
             return
 
         # 🎯 multi-timeframe confirmation (15m trend must agree)
@@ -706,11 +723,12 @@ class GroupCoordinatorAgent(Agent):
         ok_n = sum(1 for _, _, _, ok in approvals if ok)
         need = 3   # nevojiten ≥3 nga 4 grupet vendimtare
         if ok_n < need:
-            ctx.stop = True
             bad = ", ".join(f"{ic} {nm}" for gid, ic, nm, ok in approvals if not ok)
             self.report(
                 f"👥 Grupet NUK miratuan ({ok_n}/{need}): {bad} — sinjali hidhet",
                 sym, direction, ctx.chosen.get("confidence", 0))
+            if not ctx.advance():          # 🚗 provo kandidatin tjetër
+                ctx.stop = True
             return
         ok_line = " ".join(f"{ic}✓" if ok else f"{ic}✗"
                            for _, ic, _, ok in approvals)
