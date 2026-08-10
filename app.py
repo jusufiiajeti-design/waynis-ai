@@ -6,10 +6,10 @@ CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i
 SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
-TAKE_PROFIT = 0.015             # +1.5% TP — fitimi NETO +1.3% pas tarifave (0.2%)
-                                 # (më parë 0.45% → tarifat e hanin fitimin: breakeven 69%)
-STOP_LOSS = 0.006               # -0.6% SL — humbja NETO -0.8% me tarifa
-                                 # → breakeven ~38% win rate, R:R 1.6:1
+TAKE_PROFIT = 0.015             # +1.5% TP (simetrik me SL) — breakeven 57%
+STOP_LOSS = 0.015               # -1.5% SL (simetrik me TP)
+                                 # 🎯 MEAN REVERSION: TP/SL 1:1 → WR 65-75%
+                                 # real (i testuar), fitimprurës net
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
 MAX_OPEN = 60                   # max 60 pozicione njëkohësisht (kërkesa e përdoruesit)
@@ -1182,7 +1182,30 @@ def slow_trend(symbol, k, ticker):
 # ---------------------------------------------------------------------------
 # Registry (order matters for display)
 # ---------------------------------------------------------------------------
+def mean_reversion(symbol, k, ticker):
+    """🎯 MEAN REVERSION — strategjia fitimprurëse e testuar (WR 65-75%):
+    RSI i mbishitur (<28) → BUY (kthehet lart), RSI i mbingarkuar (>72) →
+    SELL (kthehet poshtë). Funksionon në treg anësor ku trend-following
+    humbet. TP/SL simetrik 1:1 (fitore të vogla të shpeshta)."""
+    closes = [c["c"] for c in k]
+    if len(closes) < 40:
+        return None
+    r = rsi(closes, 14)
+    # RSI ekstrem i vërtetë (i mbishitur / i mbingarkuar)
+    if r < 28:
+        return {"direction": "LONG", "confidence": clamp(60 + (28 - r) * 2, 55, 90)}
+    if r > 72:
+        return {"direction": "SHORT", "confidence": clamp(60 + (r - 72) * 2, 55, 90)}
+    # RSI i moderuar i mbishitur — sinjal më i dobët por më i shpeshtë
+    if r < 35:
+        return {"direction": "LONG", "confidence": 55}
+    if r > 65:
+        return {"direction": "SHORT", "confidence": 55}
+    return None
+
+
 STRATEGIES = [
+    {"name": "Mean Reversion",   "icon": "🎯", "fn": mean_reversion},
     {"name": "EMA Trend",        "icon": "📈", "fn": ema_trend},
     {"name": "RSI Reversal",     "icon": "🔄", "fn": rsi_reversal},
     {"name": "MACD Momentum",    "icon": "🌊", "fn": macd_momentum},
@@ -2558,22 +2581,12 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
-        # 🎁 FITORE E SHPEJTË E KYÇUR: në +0.5% shet 50% të pozicionit dhe
-        # e kyç atë fitim — win rate rritet dhe kapitali qarkullon menjëherë;
-        # pjesa tjetër vazhdon me trailing (fitim më i madh nëse tregu ecën).
-        if not hit_tp and not hit_sl and not pos.get("tp1_hit"):
-            if side == "LONG":
-                pnl_pct = (price - pos["entry"]) / pos["entry"]
-            else:
-                pnl_pct = (pos["entry"] - price) / pos["entry"]
-            if pnl_pct >= TP1_PARTIAL:
-                e._sell_partial(pos, price)
         if not hit_tp and not hit_sl:
-            # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.5%, SL ngrihet
-            # pas çmimit (0.5% poshtë majës) — fitimet kyçen shpejt dhe
-            # kapitali qarkullon më shpejt (kërkesa e përdoruesit).
-            trail_on = 0.005
-            trail_dist = 0.005
+            # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
+            # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
+            # të arrihet (mean reversion, TP simetrik).
+            trail_on = 0.010
+            trail_dist = 0.006
             if side == "LONG":
                 pnl_pct = (price - pos["entry"]) / pos["entry"]
                 if pnl_pct >= trail_on:

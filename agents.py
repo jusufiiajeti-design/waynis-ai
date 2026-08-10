@@ -1003,22 +1003,12 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
-        # 🎁 FITORE E SHPEJTË E KYÇUR: në +0.5% shet 50% të pozicionit dhe
-        # e kyç atë fitim — win rate rritet dhe kapitali qarkullon menjëherë;
-        # pjesa tjetër vazhdon me trailing (fitim më i madh nëse tregu ecën).
-        if not hit_tp and not hit_sl and not pos.get("tp1_hit"):
-            if side == "LONG":
-                pnl_pct = (price - pos["entry"]) / pos["entry"]
-            else:
-                pnl_pct = (pos["entry"] - price) / pos["entry"]
-            if pnl_pct >= TP1_PARTIAL:
-                e._sell_partial(pos, price)
         if not hit_tp and not hit_sl:
-            # 🧠 TRAILING INTELLIGJENT: sapo fitimi arrin +0.5%, SL ngrihet
-            # pas çmimit (0.5% poshtë majës) — fitimet kyçen shpejt dhe
-            # kapitali qarkullon më shpejt (kërkesa e përdoruesit).
-            trail_on = 0.005
-            trail_dist = 0.005
+            # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
+            # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
+            # të arrihet (mean reversion, TP simetrik).
+            trail_on = 0.010
+            trail_dist = 0.006
             if side == "LONG":
                 pnl_pct = (price - pos["entry"]) / pos["entry"]
                 if pnl_pct >= trail_on:
