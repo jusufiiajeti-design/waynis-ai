@@ -1830,18 +1830,10 @@ class BrainAgent(Agent):
                 closes = [c["c"] for c in kl]
                 e200 = ema(closes, 200)[-1]
                 trend_long = closes[-1] > e200
-                # 🧠 DAKORDËSI E DYFISHTË: 15m (EMA50>EMA200) duhet të pajtohet
-                # me 1H (EMA200) — testuar: humbjet −$450 → −$79 (6× më mirë).
+                # 🎯 MR-ONLY: pa dual-check 15m — vetëm trendi 1h (EMA200),
+                # siç e vërtetoi backtest-i fitimprurës (+$151). Filtri i dyfishtë
+                # e zvogëlonte shumë numrin e sinjaleve.
                 dual_ok = True
-                try:
-                    k15 = await ctx.market.fetch_klines(sym, "15m", 250)
-                    if k15 and len(k15) >= 210:
-                        c15 = [c["c"] for c in k15]
-                        dual_long = ema(c15, 50)[-1] > ema(c15, 200)[-1]
-                        if dual_long != trend_long:
-                            dual_ok = False
-                except Exception:
-                    pass
                 # ATR% në 1H
                 trs = []
                 for i in range(-14, 0):
@@ -1997,9 +1989,9 @@ class ConsensusAgent(Agent):
             prob = ctx.probability.get(sym)
             if prob:
                 lp, sp = prob
-                if direction == "LONG" and lp < 65:
+                if direction == "LONG" and lp < 55:
                     continue
-                if direction == "SHORT" and sp < 65:
+                if direction == "SHORT" and sp < 55:
                     continue
                 if direction == "LONG" and lp <= sp:
                     continue
@@ -2240,8 +2232,9 @@ class ValidatorAgent(Agent):
                 ctx.stop = True
             return
 
-        # 🎯 multi-timeframe confirmation (15m trend must agree)
-        if MTF_ENABLED:
+        # 🎯 MR-ONLY: MTF 15m hiqet — MR është kontrarian (hyn kundër lëvizjes
+        # së shpejtë), ndaj s'ka kuptim ta konfirmosh me trend 15m.
+        if False and MTF_ENABLED:
             ok, m = await self._mtf(e, best["symbol"], best["direction"])
             if not ok:
                 self.report(f"{best['symbol']}: MTF {m}",
