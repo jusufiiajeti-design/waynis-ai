@@ -197,18 +197,14 @@ class BrainAgent(Agent):
 
     async def execute(self, ctx, idx):
         e = self.engine
-        # kornizë e lartë për trendin
         trend_bar = "1h"
-        # cache e trendit
         now = time.time()
         brain = getattr(e, "brain_cache", {})
         e.brain_cache = brain
         for sym in list(ctx.votes.keys()):
-            t = ctx.tickers.get(sym)
-            price = t["price"] if t and t.get("price", 0) > 0 else 0
             cached = brain.get(sym)
             if cached and now - cached[0] < 300:
-                trend_long, atr_pct, why = cached[1]
+                info = cached[1]
             else:
                 try:
                     kl = await ctx.market.fetch_klines(sym, trend_bar, 250)
@@ -219,20 +215,40 @@ class BrainAgent(Agent):
                 closes = [c["c"] for c in kl]
                 e200 = ema(closes, 200)[-1]
                 trend_long = closes[-1] > e200
+                # 🧠 DAKORDËSI E DYFISHTË: 15m (EMA50>EMA200) duhet të pajtohet
+                # me 1H (EMA200) — testuar: humbjet −$450 → −$79 (6× më mirë).
+                dual_ok = True
+                try:
+                    k15 = await ctx.market.fetch_klines(sym, "15m", 250)
+                    if k15 and len(k15) >= 210:
+                        c15 = [c["c"] for c in k15]
+                        dual_long = ema(c15, 50)[-1] > ema(c15, 200)[-1]
+                        if dual_long != trend_long:
+                            dual_ok = False
+                except Exception:
+                    pass
                 # ATR% në 1H
                 trs = []
                 for i in range(-14, 0):
                     h, l, pc = kl[i]["h"], kl[i]["l"], kl[i-1]["c"]
                     trs.append(max(h - l, abs(h - pc), abs(l - pc)))
                 atr_pct = (sum(trs) / 14) / (closes[-1] or 1) * 100 if trs else 0
-                why = f"trend {'rritës' if trend_long else 'rënës'} 1H (EMA200), ATR {atr_pct:.2f}%"
-                brain[sym] = (now, (trend_long, atr_pct, why))
-            # VETO sinjalet kundër trendit ose në treg të vdekur
+                why = (f"trend {'rritës' if trend_long else 'rënës'} 1H (EMA200)"
+                       + ("" if dual_ok else " + 15m kundërshton"))
+                info = (trend_long, atr_pct, why, dual_ok)
+                brain[sym] = (now, info)
+            trend_long, atr_pct, why, dual_ok = info
+            # 🔒 VETO: 15m kundërshton 1H → s'hap
+            if not dual_ok:
+                del ctx.votes[sym]
+                self.report(f"🧠 {sym}: 15m kundërshton 1H ({why}) — veto", sym)
+                continue
+            # VETO: treg i vdekur
             if atr_pct < 0.15:
                 del ctx.votes[sym]
                 self.report(f"🧠 {sym}: treg i vdekur (ATR {atr_pct:.2f}%) — s'hap", sym)
                 continue
-            # filtro votat: mbaj vetëm ato në drejtimin e trendit
+            # filtro votat: vetëm në drejtimin e trendit 1H
             kept = [v for v in ctx.votes[sym] if (v[1] == "LONG") == trend_long]
             if not kept:
                 del ctx.votes[sym]
@@ -240,6 +256,7 @@ class BrainAgent(Agent):
             else:
                 ctx.votes[sym] = kept
                 self.report(f"🧠 {sym}: {why} — sinjale në linjë", sym)
+
 
 
 class ConsensusAgent(Agent):
