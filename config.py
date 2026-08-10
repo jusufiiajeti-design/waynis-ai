@@ -1,7 +1,7 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 3               # coordinator cycle period
+CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti

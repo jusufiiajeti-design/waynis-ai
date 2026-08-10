@@ -2,7 +2,7 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 3               # coordinator cycle period
+CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
@@ -2517,7 +2517,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 45:    # qarkullim më i shpejtë: liro pas 45 min
+                if age_min >= 30:    # qarkullim shumë i shpejtë: liro pas 30 min
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
@@ -3797,8 +3797,24 @@ clients = set()
 @app.on_event("startup")
 async def startup():
     app.state.task = asyncio.create_task(engine.run())
+    # ❤️ ZEMRA: e mban botin zgjuar 24/7 — Render-i falas e fle serverin
+    # pas ~15 min pa aktivitet. Ky ping çdo 8 minuta e mban gjallë, kështu
+    # që tregtimi dhe qarkullimi vazhdojnë natë e ditë pa ndërprerje.
+    app.state.heartbeat = asyncio.create_task(_heartbeat())
     # warm the ticker cache so the first page load is instant
     await asyncio.to_thread(_warmup)
+
+async def _heartbeat():
+    import urllib.request
+    base = os.environ.get("RENDER_EXTERNAL_URL", "https://waynis-ai-1.onrender.com")
+    url = base.rstrip("/") + "/api/health"
+    while True:
+        try:
+            await asyncio.to_thread(
+                lambda: urllib.request.urlopen(url, timeout=15).read())
+        except Exception:
+            pass
+        await asyncio.sleep(8 * 60)   # çdo 8 minuta — nën pragun 15 min të Render-it
 
 def _warmup():
     import urllib.request
