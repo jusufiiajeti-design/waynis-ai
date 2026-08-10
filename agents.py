@@ -548,11 +548,19 @@ class SizerAgent(Agent):
                 else entry * (1 + STOP_LOSS)
         stop_dist = abs(entry - sl)
         risk_amount = base * TRADE_RISK
-        qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
+        # 🎯 HUMBJA TOTALE = $2 (kërkesa e përdoruesit): SL ($risk_amount)
+        # + tarifat (0.1% hyrje + 0.1% dalje mbi notional). Llogarisim qty
+        # që të plotësojë:  qty*stop_dist + qty*entry*2*FEE_RATE <= risk_total
+        # ku risk_total = $2. Zgjidhje: qty = risk_total / (stop_dist + entry*2*FEE_RATE)
+        risk_total = max(risk_amount, 2.0)   # të paktën $2, por jo më pak se risk_amount
+        denom = stop_dist + entry * 2 * FEE_RATE
+        qty = risk_total / denom if denom > 0 else 0.0
         if qty * entry > equity * 0.35:
             qty = equity * 0.35 / entry
         ctx.qty = qty
-        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} ({mode})",
+        loss_est = qty * stop_dist + qty * entry * 2 * FEE_RATE
+        self.report(f"{qty:.4f} @ {entry:.6g} — humbja max ${loss_est:.2f} "
+                    f"(SL ${qty*stop_dist:.2f} + tarifa ${qty*entry*2*FEE_RATE:.2f})",
                     sig["symbol"], sig["direction"], sig["confidence"])
 
 
