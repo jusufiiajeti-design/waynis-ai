@@ -37,6 +37,26 @@ WATCHLIST = [
     ("LTC-USDT", None, None),
     ("TRX-USDT", None, None),
     ("UNI-USDT", None, None),
+    # 🚀 më shumë monedha likuide (OKX) — më shumë mundësi/ditë
+    ("TON-USDT", None, None),
+    ("HBAR-USDT", None, None),
+    ("AAVE-USDT", None, None),
+    ("FIL-USDT", None, None),
+    ("STX-USDT", None, None),
+    ("ETC-USDT", None, None),
+    ("SEI-USDT", None, None),
+    ("TIA-USDT", None, None),
+    ("WIF-USDT", None, None),
+    ("JUP-USDT", None, None),
+    ("ENA-USDT", None, None),
+    ("ONDO-USDT", None, None),
+    ("PENDLE-USDT", None, None),
+    ("ALT-USDT", None, None),
+    ("1000PEPE-USDT", None, None),
+    ("CRV-USDT", None, None),
+    ("MKR-USDT", None, None),
+    ("LDO-USDT", None, None),
+    ("RUNE-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}

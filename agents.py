@@ -131,9 +131,9 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 300:
+            if sym in e.cooldown and now - e.cooldown[sym] < 20:    # rihyrje e shpejtë
                 continue
-            klines = await ctx.market.fetch_klines(sym, "1m", 60)
+            klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)

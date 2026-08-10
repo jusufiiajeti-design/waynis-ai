@@ -2,8 +2,8 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 4               # coordinator cycle period
-SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
+CYCLE_SECONDS = 3               # coordinator cycle period
+SCAN_BATCH = 40                 # skanon të GJITHA monedhat çdo cikël (40)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
 TAKE_PROFIT = 0.015             # +1.5% TP — fitimi NETO +1.3% pas tarifave (0.2%)
@@ -228,6 +228,26 @@ WATCHLIST = [
     ("LTC-USDT", None, None),
     ("TRX-USDT", None, None),
     ("UNI-USDT", None, None),
+    # 🚀 më shumë monedha likuide (OKX) — më shumë mundësi/ditë
+    ("TON-USDT", None, None),
+    ("HBAR-USDT", None, None),
+    ("AAVE-USDT", None, None),
+    ("FIL-USDT", None, None),
+    ("STX-USDT", None, None),
+    ("ETC-USDT", None, None),
+    ("SEI-USDT", None, None),
+    ("TIA-USDT", None, None),
+    ("WIF-USDT", None, None),
+    ("JUP-USDT", None, None),
+    ("ENA-USDT", None, None),
+    ("ONDO-USDT", None, None),
+    ("PENDLE-USDT", None, None),
+    ("ALT-USDT", None, None),
+    ("1000PEPE-USDT", None, None),
+    ("CRV-USDT", None, None),
+    ("MKR-USDT", None, None),
+    ("LDO-USDT", None, None),
+    ("RUNE-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
@@ -1666,9 +1686,9 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 300:
+            if sym in e.cooldown and now - e.cooldown[sym] < 20:    # rihyrje e shpejtë
                 continue
-            klines = await ctx.market.fetch_klines(sym, "1m", 60)
+            klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
