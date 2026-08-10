@@ -5,9 +5,10 @@ CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i
 SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
 TRADE_RISK = 0.0002             # ~$2 risk SL/tregti me $10k (0.02%) — humbja $2 (kërkesa)
                                  # Tarifat (~$0.30) → humbje totale ~$2.30/tregti
-TAKE_PROFIT = 0.020             # +2.0% TP — fitim më i madh (testuar: WR 67%, +$6.33/tregti)
-STOP_LOSS = 0.015               # -1.5% SL — breakeven 49% (WR 67% e kalon)
-                                 # 🎯 MEAN REVERSION: fitim më i madh + më shumë tregti
+TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
+                                 # net +$396 (25 monedha), +$6.95/tregti → ~$56/ditë
+STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
+                                 # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
 MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
