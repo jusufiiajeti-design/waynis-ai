@@ -145,7 +145,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 5:     # rihyrje ekstreme e shpejtë
+            if sym in e.cooldown and now - e.cooldown[sym] < 3:     # rihyrje ekstreme e shpejtë
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
@@ -969,7 +969,7 @@ class TrackerAgent(Agent):
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 20:    # qarkullim ekstrem i shpejtë: liro pas 20 min
+                if age_min >= 15:    # qarkullim ekstrem i shpejtë: liro pas 15 min
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
@@ -1097,6 +1097,23 @@ class LearningAgent(Agent):
             })
             e.learning_history = e.learning_history[-HISTORY_MAX:]
             save_history(e.learning_history)
+
+        # 🎓 MEAN REVERSION FOKUS: në MR-only, trajnimi përqendrohet te MR —
+        # pesha e tij rritet me fitore, ulet me humbje (mëson siç duhet)
+        if getattr(ctx, "mr_only", False):
+            mr = e.strategy_stats.get("Mean Reversion")
+            if mr and mr.get("trades", 0) > 0:
+                mr_wr = mr.get("wins", 0) / max(mr.get("trades", 1), 1)
+                w = mr.get("weight", 1.0)
+                if mr_wr > 0.5 and w < 1.8:
+                    mr["weight"] = round(min(1.8, w + 0.05), 3)
+                elif mr_wr < 0.35 and w > 0.6:
+                    mr["weight"] = round(max(0.6, w - 0.05), 3)
+                e.strategy_stats["Mean Reversion"] = mr
+                self.report(
+                    f"🎓 Trajnim MR: pesha {w:.2f}→{mr['weight']:.2f} "
+                    f"({mr.get('trades',0)} tregti, WR {mr_wr*100:.0f}%)",
+                    None, None, None)
 
         trained = sum(1 for s in e.strategy_stats.values()
                       if s.get("trades", 0) > 0)

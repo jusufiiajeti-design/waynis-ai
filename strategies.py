@@ -277,12 +277,12 @@ def mean_reversion(symbol, k, ticker):
     if len(closes) < 40:
         return None
     r = rsi(closes, 14)
-    # 🎯 pragje më të buta (35/65): më shumë tregti — testuar: 30 tregti,
-    # WR 67%, +$6.33/tregti (më i miri nga 6 variantet)
-    if r < 35:
-        return {"direction": "LONG", "confidence": clamp(60 + (35 - r) * 1.5, 55, 90)}
-    if r > 65:
-        return {"direction": "SHORT", "confidence": clamp(60 + (r - 65) * 1.5, 55, 90)}
+    # 🎯 pragje 40/60: më shumë tregti (46 vs 39) me net pozitiv — testuar
+    # TP2.0/SL1.5 RSI40/60: 46 tregti, WR 50%, net +$138
+    if r < 40:
+        return {"direction": "LONG", "confidence": clamp(58 + (40 - r) * 1.5, 52, 88)}
+    if r > 60:
+        return {"direction": "SHORT", "confidence": clamp(58 + (r - 60) * 1.5, 52, 88)}
     return None
 
 
