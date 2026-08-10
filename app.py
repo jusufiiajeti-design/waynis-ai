@@ -2760,6 +2760,10 @@ class PaperEngine:
             with self._conn() as c:
                 c.execute("UPDATE account SET peak=? WHERE id=1", (eq,))
             return False
+        # 🔒 mos mbro kur s'ka fitim real: nëse equity < kapitali fillestar,
+        # s'ka asgjë për të mbrojtur — e lë botin të tregtojë (rikuperim)
+        if eq <= STARTING_BALANCE:
+            return False
         floor = peak * (1.0 - self.equity_lock_pct)
         if eq < floor and peak > 0:
             n = await self._close_all("lock")
