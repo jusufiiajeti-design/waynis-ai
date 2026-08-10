@@ -1,7 +1,7 @@
 """
-Waynis AI — 28 AGENTË bërthamë + 1000 VARIANTE strategjike (ensemble) që bashkëpunojnë.
+Waynis AI — 20-AGENT collaborative control system.
 
-Boti drejtohet nga 28 agjentë të specializuar + 1000 variante strategjike që votojnë së bashku (çdo familje ka një zë të barabartë) dhe MËSOJNË:
+The bot is run by TWENTY specialised agents that work together and LEARN:
 
   Phase 1  SCAN    1.  📡 Scanner          — fetches live prices + candles
   Phase 2  PREDICT 2.  📈 EMA Trend        — trend follower
@@ -37,7 +37,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -85,7 +85,6 @@ class CycleContext:
         self.candles = {}
         self.votes = {}            # symbol -> [(name, direction, conf)]
         self.chosen = None         # consensus candidate
-        self.picks = []            # grid: LONG + SHORT candidates
         self.votes_for_trade = []  # strategy names behind the chosen signal
         self.qty = 0.0
         self.trade_id = None
@@ -124,24 +123,22 @@ class ScannerAgent(Agent):
         e.last_tickers = tickers
 
         syms = [w[0] for w in WATCHLIST]
+        open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
-        # scan ALL symbols INCLUDING open positions — the tracker needs
-        # fresh candles on open positions to decide smart exits.
-        batch = syms[:]
+        batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
 
         scanned = []
         for sym in batch:
-            # use cache when fresh — skips the network call → much faster cycles
-            klines = e.get_klines_cached(sym, TRADE_TF, 60, ttl=KLINES_TTL)
-            if klines is None:
-                klines = await ctx.market.fetch_klines(sym, TRADE_TF, 60)
-                if len(klines) >= 30:
-                    e.klines_cache[(sym, TRADE_TF)] = (time.time(), klines)
+            if sym in open_syms:
+                continue
+            if sym in e.cooldown and now - e.cooldown[sym] < 300:
+                continue
+            klines = await ctx.market.fetch_klines(sym, "1m", 60)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.04)
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")
@@ -184,217 +181,38 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 
 
 # ======================================================================
-# 🧩 ENSEMBLE VOTER — runs up to 500 strategy variants on the leading
-# candidate, so the final decision reflects the whole ensemble.
-# ======================================================================
-class EnsembleVoterAgent(Agent):
-    step, name, icon = 1, "Ensemble", "🧩"
-    role = "1000 variante strategjike votojnë për kandidatin kryesor"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        variants = getattr(e, "variant_strategies", [])
-        if not variants or not ctx.votes:
-            return
-        n = len(variants)
-        # 🔁 MOSTËR RROTULLUESE: me 100,000 agjentë nuk i ekzekutojmë të
-        # gjithë çdo cikël (do ishte ~2s/3s) — çdo cikël voton një mostër
-        # e përzier prej SAMPLE_N agjentësh; me kalimin e kohës TË GJITHË
-        # 100,000 marrin pjesë njësoj shpesh (bashkëpunim i plotë).
-        SAMPLE_N = 1500
-        offset = (getattr(e, "ensemble_round", 0) * SAMPLE_N) % n
-        e.ensemble_round = (e.ensemble_round + 1) % max(1, (n + SAMPLE_N - 1) // SAMPLE_N)
-        sample = variants[offset:offset + SAMPLE_N]
-        if len(sample) < SAMPLE_N:                 # mbështjellje në fund
-            sample = sample + variants[:SAMPLE_N - len(sample)]
-        self._sample_n = SAMPLE_N
-        self._offset = offset
-        # pick the symbol with the strongest core consensus
-        best_sym = None
-        best_score = 0.0
-        for sym, votes in ctx.votes.items():
-            net = 0.0
-            for _, d, conf in votes:
-                net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
-            if abs(net) > best_score:
-                best_score = abs(net)
-                best_sym = sym
-        if not best_sym:
-            return
-        klines = ctx.candles.get(best_sym)
-        if not klines:
-            return
-        ticker = ctx.tickers.get(best_sym)
-        voted = 0
-        votes_list = ctx.votes.setdefault(best_sym, [])
-        for v in sample:
-            try:
-                r = v["fn"](best_sym, klines, ticker)
-                if r:
-                    votes_list.append((v["name"], r["direction"],
-                                       r["confidence"]))
-                    voted += 1
-            except Exception:
-                continue
-        if voted:
-            self.report(f"🧩 {voted}/{len(sample)} agjentë (mostër "
-                        f"rrotulluese, nga 100,000) votuan për {best_sym} — "
-                        f"konsensus i plotë")
-        else:
-            self.report(f"🧩 mostër {len(sample)} agjentësh (100,000 gjithsej) "
-                        f"— asnjë sinjal i fortë")
-
-
-# ======================================================================
-# 🔀 GRID BALANCER — actively finds the missing side of the grid.
-# If longs dominate → it searches for overbought coins (RSI high) and
-# queues a SHORT; if shorts dominate → it finds oversold coins (RSI low)
-# and queues a LONG. This keeps the portfolio two-sided like a grid.
-# ======================================================================
-class GridBalancerAgent(Agent):
-    step, name, icon = 1, "Grid Balancer", "🔀"
-    role = "Balancues — kërkon në mënyrë aktive anën e munguar (SHORT/LONG)"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        if e.mode == "real":
-            return                      # spot real = vetëm LONG
-        open_pos = e.open_positions()
-        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
-        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
-        if len(open_pos) >= MAX_OPEN:
-            return
-        imbalance = n_long - n_short
-
-        # anë që duhet (palca e gridit)
-        want = "SHORT" if imbalance >= 2 else ("LONG" if imbalance <= -2 else None)
-        if not want:
-            return
-        best = None
-        for sym, klines in ctx.candles.items():
-            if sym in {p["symbol"] for p in open_pos}:
-                continue
-            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
-                continue
-            if len(klines) < 30:
-                continue
-            closes = [c["c"] for c in klines]
-            r = rsi(closes)
-            price = (ctx.tickers.get(sym) or {}).get("price") or closes[-1]
-            if want == "SHORT" and r > 66:            # i mbingarkuar → SHORT
-                conf = 60 + (r - 66) * 1.2
-                if best is None or conf > best["confidence"]:
-                    best = {"symbol": sym, "direction": "SHORT",
-                            "entry": price, "confidence": min(conf, 88),
-                            "rsi": r}
-            elif want == "LONG" and r < 34:           # i mbishitur → LONG
-                conf = 60 + (34 - r) * 1.2
-                if best is None or conf > best["confidence"]:
-                    best = {"symbol": sym, "direction": "LONG",
-                            "entry": price, "confidence": min(conf, 88),
-                            "rsi": r}
-        if best:
-            sym = best["symbol"]
-            # vendose DREJTPËRDREJT te picks — Filler-i e hap pavarësisht
-            # konsensusit (kjo e mban grid-in të balancuar gjithmonë)
-            entry = best["entry"]
-            if best["direction"] == "LONG":
-                tp = entry * (1 + TAKE_PROFIT)
-                sl = entry * (1 - STOP_LOSS)
-            else:
-                tp = entry * (1 - TAKE_PROFIT)
-                sl = entry * (1 + STOP_LOSS)
-            pick = {"symbol": sym, "direction": best["direction"],
-                    "entry": entry, "tp": tp, "sl": sl,
-                    "confidence": best["confidence"],
-                    "supporting": ["GridBalancer"]}
-            # mos e dyfisho nëse konsensusi e ka tashmë
-            if not any(p["symbol"] == sym and p["direction"] == pick["direction"]
-                       for p in ctx.picks):
-                ctx.picks.append(pick)
-            self.report(f"🔀 Grid: kërkoj {want} — {sym} (RSI {best['rsi']:.0f}) "
-                        f"për ekuilibër {n_long}L/{n_short}S",
-                        sym, best["direction"], best["confidence"])
-        else:
-            self.report(f"🔀 Grid: {n_long}L/{n_short}S — "
-                        f"nuk gjeta sinjal {want} këtë cikël")
-
-
-# ======================================================================
-# 🗳️ CONSENSUS (combines votes with learning weights)
+# 🗳️ 12 — CONSENSUS (combines votes with learning weights)
 # ======================================================================
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
-    role = "Bashkëpunimi: kombinon votat e 1000 varianteve + strategjive me peshat e mësuara — çdo familje një zë"
+    role = "Kombinon votat e 10 strategjive me peshat e mësuara"
 
     async def execute(self, ctx, idx):
         e = self.engine
         weights = e.strategy_stats
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
         rms = self._relative_strength(ctx)                # "arbitrage" across symbols
-        open_syms = {p["symbol"] for p in e.open_positions()}
-        # 🔀 grid balance: count open LONG vs SHORT — favour the rarer side
-        open_pos = e.open_positions()
-        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
-        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
         candidates = []
 
         for sym, votes in ctx.votes.items():
-            if sym in open_syms:                # s'hapim pozicion të dytë
-                continue
-            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
-                continue                        # cooldown 45s pas mbylljes
-            # 🧩 BASHKËPUNIM 1000 AGJENTËSH: votat grupohen në FAMILJE
-            # (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, ...).
-            # Çdo familje ka NJË zë të barabartë → asnjë familje me shumë
-            # variante (p.sh. 300 EMA) nuk e dominon vendimin; familjet
-            # bashkëpunojnë dhe bien dakord bashkë.
-            fam = {}
-            for sname, d, conf in votes:
-                key = sname.split("(")[0] if "(" in sname else sname
-                f = fam.setdefault(key, [0.0, 0.0])
-                w = weights.get(sname, {}).get("weight", 1.0)
-                f[0] += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
-                f[1] += w
             net = 0.0
             tw = 0.0
-            for key, (fnet, fw) in fam.items():
-                if fw <= 0:
-                    continue
-                fw2 = weights.get(key, {}).get("weight", 1.0)   # pesha e mësuar e familjes
-                net += (fnet / fw) * fw2
-                tw += fw2
+            for sname, d, conf in votes:
+                w = weights.get(sname, {}).get("weight", 1.0)
+                net += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
+                tw += w
             if tw <= 0:
                 continue
-            score = net / tw                     # -1 .. 1 (peshuar sipas familjeve)
+            score = net / tw                     # -1 .. 1
             if score > threshold:
                 direction = "LONG"
             elif score < -threshold:
                 direction = "SHORT"
             else:
                 continue
-            # grid balance boost: if one side dominates, boost the other
-            if e.mode != "real":
-                if direction == "SHORT" and n_long > n_short:
-                    score = min(score * 1.0 + 0.05, 1.0)
-                elif direction == "LONG" and n_short > n_long:
-                    score = max(score - 0.05, -1.0)
-                if direction == "SHORT" and n_long - n_short >= 4:
-                    score = min(score + 0.05, 1.0)
-                elif direction == "LONG" and n_short - n_long >= 4:
-                    score = max(score - 0.05, -1.0)
-            # familjet që mbështesin drejtimin e zgjedhur
-            fam_sup = {}
-            for sname, d, c in votes:
-                key = sname.split("(")[0] if "(" in sname else sname
-                if d == direction:
-                    e2 = fam_sup.setdefault(key, [0, 0.0])
-                    e2[0] += 1
-                    e2[1] = max(e2[1], c)
-            supporting = [k for k in fam_sup]
-            # konsensus gride: 1 familje e fortë (≥65%) OSE 2+ familje
-            strong = [k for k, (cnt, mx) in fam_sup.items() if mx >= 65]
-            if len(supporting) < 2 and len(strong) < 1:
+            supporting = [sname for sname, d, _ in votes
+                          if d == direction]
+            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
@@ -421,21 +239,9 @@ class ConsensusAgent(Agent):
                 "supporting": supporting,
                 "n_votes": len(votes),
                 "rms_note": rms_note,
-                "entry": (ctx.tickers.get(sym) or {}).get("price") or 0,
             })
 
         if not candidates:
-            # nëse balancuesi i grid-it ka vendosur një pick, vazhdojmë
-            # me të (nuk ndalemi) — kështu grid-i mbetet i balancuar
-            if getattr(ctx, "picks", []):
-                ctx.chosen = ctx.picks[0]
-                self.report(f"🔀 Pa konsensus — vazhdoj me pick-un e "
-                            f"balancuesit ({ctx.picks[0]['symbol']} "
-                            f"{ctx.picks[0]['direction']})",
-                            ctx.picks[0]["symbol"],
-                            ctx.picks[0]["direction"],
-                            ctx.picks[0]["confidence"])
-                return
             self.report(f"Pa konsensus (pragu adaptiv {threshold:.2f}) — "
                         f"boti pret sinjale më të forta")
             ctx.stop = True
@@ -443,26 +249,8 @@ class ConsensusAgent(Agent):
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         best = candidates[0]
-        # 🔀 GRID: pick the best LONG and the best SHORT together, so both
-        # directions can open in the same cycle (grid-style trading).
-        best_long = max((c for c in candidates if c["direction"] == "LONG"),
-                        key=lambda c: c["confidence"], default=None)
-        best_short = max((c for c in candidates if c["direction"] == "SHORT"),
-                         key=lambda c: c["confidence"], default=None)
-        picks = [c for c in (best_long, best_short) if c]
-        picks.sort(key=lambda c: c["confidence"], reverse=True)
-        ctx.chosen = picks[0] if picks else None
-        # ruaj picks ekzistuese të balancuesit + shto ato të konsensusit
-        existing = list(getattr(ctx, "picks", []))
-        seen = {(p["symbol"], p["direction"]) for p in existing}
-        for p in picks:
-            if (p["symbol"], p["direction"]) not in seen:
-                existing.append(p)
-                seen.add((p["symbol"], p["direction"]))
-        ctx.picks = existing
-        ctx.votes_for_trade = (picks[0]["supporting"] if picks
-                               else (existing[0]["supporting"]
-                                     if existing else []))
+        ctx.chosen = best
+        ctx.votes_for_trade = best["supporting"]
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
@@ -600,14 +388,6 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
-        if e.is_risk_paused():
-            mins = int((e.risk_pause_until - time.time()) // 60) + 1
-            self.report(f"🛡️ Risk Manager: push {mins} min — "
-                        f"ndalim nga humbjet (WR {e.risk_state.get('wr')}%)",
-                        best["symbol"], best["direction"], best["confidence"])
-            ctx.stop = True
-            return
-
         if e.mode == "real":
             if not e.exchange.configured:
                 self.report("💰 REAL: çelësat s'janë konfiguruar "
@@ -638,16 +418,8 @@ class ValidatorAgent(Agent):
         if klines and len(klines) >= 2:
             closes = [c["c"] for c in klines]
             r = rsi(closes)
-            # RSI ekstrem bllokon vetëm në drejtimin e rrezikshëm:
-            # LONG me RSI shumë të lartë (po përfundon rritja)
-            # SHORT me RSI shumë të ulët (po përfundon rënia)
-            if best["direction"] == "LONG" and r > 88:
-                self.report(f"{best['symbol']}: RSI {r:.0f} — LONG i rrezikshëm",
-                            best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
-                return
-            if best["direction"] == "SHORT" and r < 12:
-                self.report(f"{best['symbol']}: RSI {r:.0f} — SHORT i rrezikshëm",
+            if r > 85 or r < 15:
+                self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
@@ -672,19 +444,9 @@ class ValidatorAgent(Agent):
             return
 
         # 🎯 multi-timeframe confirmation (15m trend must agree)
-        # — but in paper mode, SHORT against an up-trend is allowed (grid
-        #   style) when the balance favours it; it just gets lower conf.
         if MTF_ENABLED:
             ok, m = await self._mtf(e, best["symbol"], best["direction"])
             if not ok:
-                if e.mode == "paper" and best["direction"] == "SHORT":
-                    # grid SHORT: allowed, but reduce confidence
-                    best["confidence"] = max(50, best["confidence"] - 15)
-                    self.report(
-                        f"{best['symbol']}: SHORT kundër trendit (grid) "
-                        f"— konfidenca u ul në {best['confidence']:.0f}%",
-                        best["symbol"], best["direction"], best["confidence"])
-                    return
                 self.report(f"{best['symbol']}: MTF {m}",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
@@ -737,30 +499,17 @@ class RiskManagerAgent(Agent):
                         ctx.chosen["confidence"])
             ctx.stop = True
             return
-        # adaptive risk status (protects ×2 against losses)
-        ri = e.risk_info()
-        risk_note = ""
-        if ri.get("paused"):
-            mins = int((e.risk_pause_until - time.time()) // 60) + 1
-            risk_note = f" 🛡️ push {mins} min (WR {ri.get('wr')}%)"
-        elif ri.get("effective_mult", 1.0) < ri.get("user_mult", 1.0):
-            risk_note = (f" 🛡️ mbrojtje: ×{ri.get('user_mult')} → "
-                         f"×{ri.get('effective_mult')} (WR {ri.get('wr')}%)")
-        elif ri.get("effective_mult", 1.0) >= 2:
-            risk_note = " 🛡️ ×2 aktiv — Risk Manager në vëzhgim"
-
         if e.mode == "real":
             bal = e.real_balance()
             notional = ctx.qty * ctx.chosen.get("entry", 0)
             if notional > bal * REAL_MAX_NOTIONAL_PCT:
                 ctx.qty = bal * REAL_MAX_NOTIONAL_PCT / ctx.chosen.get("entry", 1)
             self.report(f"💰 Risk: balanca ${bal:.2f}, ekspozim ≤ "
-                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%{risk_note}",
+                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
         else:
-            self.report(f"Risk: ≤{MAX_OPEN} pozicione, drawdown ≤10%, "
-                        f"ekspozim ≤35%{risk_note}",
+            self.report("Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
 
@@ -780,59 +529,30 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
-        # stop distance depends on direction (SHORT SL is ABOVE entry)
-        sl = sig.get("sl")
-        if sl is None:
-            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
-                else entry * (1 + STOP_LOSS)
-        stop_dist = abs(entry - sl)
-        sl_pct = stop_dist / entry if entry else STOP_LOSS
-
-        mult = e.effective_mult()                  # ×N normal, ×1 kur risk aktiv
-
-        # 💵 FIXED DOLLAR RISK — entry fixed (e.g. $3), loss never above max
-        # (e.g. $1), regardless of ×1..×5.
-        if e.fixed_risk_enabled:
-            notional = e.fixed_entry_usd
-            if e.mode == "real" and notional < REAL_MIN_NOTIONAL:
-                notional = REAL_MIN_NOTIONAL      # Binance min ~$5
-            qty_entry = notional / entry if entry else 0
-            # safety: qty limited so SL loss never exceeds the cap
-            qty_cap = (e.fixed_max_loss_usd / (entry * sl_pct)) \
-                if (entry and sl_pct > 0) else 0
-            qty = min(qty_entry, qty_cap) if qty_cap > 0 else qty_entry
-            loss_if_sl = qty * entry * sl_pct if entry else 0
-            ctx.qty = qty
-            self.report(
-                f"💵 Fikse: ${notional:.2f} hyrje (pavarësisht ×{mult}) · "
-                f"SL {sl_pct*100:.2f}% → humbje max ${loss_if_sl:.2f} "
-                f"(kufiri ${e.fixed_max_loss_usd:.2f})",
-                sig["symbol"], sig["direction"], sig["confidence"])
-            return
-
         if e.mode == "real":
             bal = e.real_balance()
-            notional = bal * min(REAL_MAX_NOTIONAL_PCT * mult, 0.40)
+            notional = bal * REAL_MAX_NOTIONAL_PCT
             ctx.qty = notional / entry if entry else 0
             self.report(f"💰 REAL {ctx.qty:.6f} @ {entry:.6g} (~${notional:.2f}, "
-                        f"maks {min(REAL_MAX_NOTIONAL_PCT*100*mult,40):.0f}% e balancës, ×{mult:g})",
+                        f"maks {REAL_MAX_NOTIONAL_PCT*100:.0f}% e balancës)",
                         sig["symbol"], sig["direction"], sig["confidence"])
             return
 
         equity = e.account()["equity"]
         base = equity if e.compound else STARTING_BALANCE
         mode = "KOMPONIM" if e.compound else "FIKS"
-        risk_amount = base * TRADE_RISK * mult
+        # stop distance depends on direction (SHORT SL is ABOVE entry)
+        sl = sig.get("sl")
+        if sl is None:
+            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
+                else entry * (1 + STOP_LOSS)
+        stop_dist = abs(entry - sl)
+        risk_amount = base * TRADE_RISK
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
-        # clear progression: ×1=35% ×2=50% ×3=60% ×4=70% ×5=80%
-        # (SL 0.35% mban rrezikun e llogarisë ~0.28% edhe në ×5)
-        pct_map = {1: 0.35, 2: 0.50, 3: 0.60, 4: 0.70, 5: 0.80}
-        max_pct = pct_map.get(int(mult), 0.80)
-        if qty * entry > equity * max_pct:
-            qty = equity * max_pct / entry
+        if qty * entry > equity * 0.35:
+            qty = equity * 0.35 / entry
         ctx.qty = qty
-        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} "
-                    f"({mode}, ×{mult:g}, deri {max_pct*100:.0f}%)",
+        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} ({mode})",
                     sig["symbol"], sig["direction"], sig["confidence"])
 
 
@@ -846,57 +566,43 @@ class FillerAgent(Agent):
     async def execute(self, ctx, idx):
         e = self.engine
         sig = ctx.chosen
-        if not sig:
+        if ctx.qty <= 0:
+            self.report("Madhësi zero — urdhri anulohet",
+                        sig["symbol"], sig["direction"], sig["confidence"])
+            ctx.stop = True
             return
 
         entry = sig.get("entry", 0)
-
-        # 🔀 GRID: open both directions (LONG + SHORT) if slots allow
-        opened = 0
-        for pick in getattr(ctx, "picks", [sig]):
-            # ⚠️ E RËNDËSISHME: çmimi VETËM i simbolit të vet — kurrë
-            # fallback nga pick-i tjetër (kjo shkaktoi çmime të përziera!)
-            pp = pick.get("entry") or \
-                (ctx.tickers.get(pick["symbol"]) or {}).get("price") or 0
-            if not pp or pp <= 0:
-                continue
-            psl = pick.get("sl")
-            if psl is None:
-                psl = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
-                    else pp * (1 + STOP_LOSS)
-            pstop = abs(pp - psl) / pp
-            pqty = 0.0
-            if e.fixed_risk_enabled:
-                ntl = e.fixed_entry_usd
-                pqty = min(ntl / pp,
-                           e.fixed_max_loss_usd / (pp * pstop)) if pstop > 0 else 0
-            else:
-                pqty = (e.account()["equity"] * 0.35 * e.effective_mult()) / pp
-            if pqty <= 0:
-                continue
-            if len(e.open_positions()) >= MAX_OPEN:
-                break
-            ptp = pp * (1 + TAKE_PROFIT) if pick["direction"] == "LONG" \
-                else pp * (1 - TAKE_PROFIT)
-            psl2 = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
-                else pp * (1 + STOP_LOSS)
-            sig2 = dict(pick, entry=pp, tp=ptp, sl=psl2)
-            tid = e._open_trade(sig2, pqty, votes=ctx.votes_for_trade)
-            if tid:
-                opened += 1
-                e._event("fill",
-                         f"{pick['direction']} {pick['symbol']} {pqty:.4f} @ "
-                         f"{pp:.6g} · konsensus {pick['confidence']:.0f}%",
-                         pick["symbol"])
-        if opened:
-            ctx.trade_id = True
-            d = "+".join(f"{p['direction']} {p['symbol'].split('-')[0]}"
-                         for p in ctx.picks[:2])
-            self.report(f"🔀 Grid: hapi {opened} pozicione — {d}",
-                        sig["symbol"], sig["direction"], sig["confidence"])
+        if sig["direction"] == "LONG":
+            sig["tp"] = entry * (1 + TAKE_PROFIT)
+            sig["sl"] = entry * (1 - STOP_LOSS)
         else:
-            self.report("Asnjë pozicion i hapur — pa hapësirë ose madhësi zero",
+            sig["tp"] = entry * (1 - TAKE_PROFIT)
+            sig["sl"] = entry * (1 + STOP_LOSS)
+
+        if e.mode == "real":
+            ctx.trade_id = await e.real_open(sig, ctx.qty)
+            if not ctx.trade_id:
+                self.report(f"💰 REAL: urdhri dështoi për {sig['symbol']}",
+                            sig["symbol"], sig["direction"], sig["confidence"])
+                ctx.stop = True
+                return
+            self.report(f"💰 REAL {sig['direction']} {sig['symbol']} "
+                        f"{ctx.qty:.6f} @ {sig['entry']:.6g} — TP/SL në exchange",
                         sig["symbol"], sig["direction"], sig["confidence"])
+            await asyncio.sleep(1.0)
+            return
+
+        ctx.trade_id = e._open_trade(sig, ctx.qty, votes=ctx.votes_for_trade)
+        self.report(f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
+                    f"{sig['entry']:.6g} — nga {len(ctx.votes_for_trade)} strategji",
+                    sig["symbol"], sig["direction"], sig["confidence"])
+        if ctx.trade_id:
+            e._event("fill",
+                     f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
+                     f"{sig['entry']:.6g} · konsensus {sig['confidence']:.0f}% · "
+                     f"{len(ctx.votes_for_trade)} strategji",
+                     sig["symbol"])
         await asyncio.sleep(0.6)
 
 
@@ -914,24 +620,6 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
-
-            # 🧠 SMART EXIT — mbyll me fitim kur agjentët e shohin të
-            # arsyeshme (trend i mbaruar, RSI ekstrem, momentum i dobësuar).
-            # Nuk ka afat kohor — vendimi bazohet në tregun real.
-            # Fitimi kapet GJITHMONË në dollarë të plotë ($1, $2, $3...),
-            # kurrë me centa (p.sh. JO $1.04).
-            exit_reason = self._smart_exit(e, pos, price, ctx)
-            if exit_reason:
-                if isinstance(exit_reason, tuple):
-                    reason, banked = exit_reason
-                else:
-                    reason, banked = exit_reason, None
-                await e._close_trade(pos, price, reason, banked=banked)
-                continue
-
-            # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
-            if e.mode == "paper":
-                self._trail_profit(e, pos, price)
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
@@ -973,92 +661,6 @@ class TrackerAgent(Agent):
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
 
-    def _smart_exit(self, e, pos, price, ctx):
-        """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
-        • Shkalla në $ TË PLOTË: +$1, +$2, +$3, +$4, +$5 → kapet sa t'ia arrijë
-        • Fitimi matet NETO (pas tarifave) kundrejt shkallës — kurrë centa
-        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet (dollar i plotë)
-        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit.
-        Kthen (arsye, dollar_i_plote) ose None."""
-        side = pos["side"]
-        qty = pos["qty"] or 1
-        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
-            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        if pnl_pct < 0.05:
-            return None
-        # 💵 dollar ladder — MINIMUM $1 neto (asnjëherë nën $1!)
-        # Agjenti mban pozicionin derisa fitimi NETO të arrijë $1, $2, $3+,
-        # pastaj e kap si dollar të plotë — kurrë me centa (p.sh. JO $1.04).
-        pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE   # tarifat hyrje+dalje
-        net_usd = pnl_usd - fees_est
-        if net_usd < 1.0:
-            return None            # mban — fitimi nën $1 nuk kapet kurrë
-        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if net_usd >= rung:
-                return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
-        klines = ctx.candles.get(pos["symbol"])
-        if not klines or len(klines) < 30:
-            return None
-        closes = [c["c"] for c in klines]
-        r = rsi(closes)
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        mom = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0
-        last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
-            if len(closes) >= 3 else 0
-
-        # treguesit kapin VETËM me fitim neto >= $1 — gjithmonë dollar i plotë
-        bank = float(int(net_usd))          # p.sh. $1.37 → kapet si $1 (pa centa)
-        if side == "LONG":
-            if r > 68:
-                return ("smart: RSI i mbingarkuar — fitim i arsyeshëm", bank)
-            if e9 < e21:
-                return ("smart: trendi u kthye poshtë — fitim i arsyeshëm", bank)
-            if last2 < 0 and mom < 0:
-                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
-        else:
-            if r < 32:
-                return ("smart: RSI i mbishitur — fitim i arsyeshëm", bank)
-            if e9 > e21:
-                return ("smart: trendi u kthye lart — fitim i arsyeshëm", bank)
-            if last2 > 0 and mom > 0:
-                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
-        return None
-
-    def _trail_profit(self, e, pos, price):
-        """Trailing + shkalla në $: SL lëviz për të kyçur $1/$2/$3/$4/$5
-        sapo arrihen NETO (pas tarifave) — fitimi i arsyeshëm mbrohet gjithmonë,
-        gjithmonë në dollarë të plotë (kurrë centa)."""
-        side = pos["side"]
-        qty = pos["qty"] or 1
-        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
-            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE
-        net_usd = pnl_usd - fees_est
-        if net_usd < 1.0:
-            return
-        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë)
-        locked = 0.0
-        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if net_usd >= rung:
-                locked = rung
-                break
-        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë).
-        # Çmimi i SL llogaritet që fitimi NETO (pas tarifave) = saktësisht
-        # shkalla — kështu edhe kur SL e prek, kapet $1.00 / $2.00, kurrë centa.
-        if side == "LONG":
-            new_sl = (locked + pos["entry"] * qty * (1 + FEE_RATE)) \
-                / (qty * (1 - FEE_RATE))
-            if new_sl > pos["sl"]:
-                e._update_sl(pos["id"], new_sl)
-        else:
-            new_sl = (pos["entry"] * qty * (1 - FEE_RATE) - locked) \
-                / (qty * (1 + FEE_RATE))
-            if new_sl < pos["sl"]:
-                e._update_sl(pos["id"], new_sl)
-
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
@@ -1072,16 +674,8 @@ class TrackerAgent(Agent):
                 new_sl = pos["entry"] * 0.9995
                 if new_sl < pos["sl"]:
                     e._update_sl(pos["id"], new_sl)
-        if hit_tp:
-            # 💵 edhe TP (rrjet sigurie) kapet si dollar i plotë — kurrë centa
-            pnl_usd = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
-                else (pos["entry"] - price) * pos["qty"]
-            fees = (pos["entry"] + price) * pos["qty"] * FEE_RATE
-            net = pnl_usd - fees
-            banked = float(max(1, int(net))) if net > 0 else None
-            await e._close_trade(pos, price, "tp", banked=banked)
-        elif hit_sl:
-            await e._close_trade(pos, price, "sl")
+        if hit_tp or hit_sl:
+            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]
@@ -1102,9 +696,7 @@ class LearningAgent(Agent):
         e = self.engine
         try:
             with e._conn() as c:
-                explore_min = max(1, int(round(5 / getattr(e, "learn_speed", 1.0))))
-                fresh, max_id = aggregate_from_trades(
-                    c, e.learning_last_id, explore_min=explore_min)
+                fresh, max_id = aggregate_from_trades(c, e.learning_last_id)
             if max_id > e.learning_last_id:
                 e.learning_last_id = max_id
                 for name, st in fresh.items():
@@ -1123,8 +715,7 @@ class LearningAgent(Agent):
                     "ORDER BY id DESC LIMIT ?", (META_WINDOW,)).fetchall()
             results = [r[0] or 0.0 for r in rows][::-1]
             meta["recent"] = results[-META_WINDOW:]
-            meta["threshold"] = meta_threshold(
-                results, base=getattr(e, "user_threshold", 0.05))
+            meta["threshold"] = meta_threshold(results)
             meta["system_win_rate"] = system_win_rate(results)
         except Exception:
             pass
@@ -1145,11 +736,8 @@ class LearningAgent(Agent):
             e.learning_history = e.learning_history[-HISTORY_MAX:]
             save_history(e.learning_history)
 
-        # trained = strategies with enough trades (speed scales the bar)
-        speed = getattr(e, "learn_speed", 1.0)
-        trained_bar = max(1, int(round(5 / speed)))   # ×2 speed → 3 tregti
         trained = sum(1 for s in e.strategy_stats.values()
-                      if s.get("trades", 0) >= trained_bar)
+                      if s.get("trades", 0) > 0)
         if trained:
             top = sorted(
                 ((n, s.get("weight", 1.0), s.get("trades", 0))
@@ -1169,7 +757,6 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
-              [EnsembleVoterAgent, GridBalancerAgent, ConsensusAgent,
-               AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
-               RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
-               LearningAgent])
+              [ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
+               ValidatorAgent, RiskManagerAgent, SizerAgent,
+               FillerAgent, TrackerAgent, LearningAgent])

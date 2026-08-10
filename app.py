@@ -2,19 +2,14 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
-SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — E FIKSUAR (kërkesa e përdoruesit: mos e ndërro)
-KLINES_TTL = 20.0               # cache klines (5m qirinj) — cikle më të shpejta
+CYCLE_SECONDS = 4               # coordinator cycle period
+SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5 — kurrë nuk ndërhyn me centa
+TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
-COOLDOWN_SEC = 20               # cooldown pas mbylljes — më shumë tregti për $60/ditë
-MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
-TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
+MAX_OPEN = 4                    # max concurrent open positions (paper)
 
 # ---- real money (spot, LONG-only) ----
 FEE_RATE = 0.001                # 0.1% per side (taker) — also simulated in paper
@@ -32,36 +27,6 @@ PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
-COMPOUND_MULT_MAX = 5.0         # max compound multiplier (×1..×5 user)
-
-# ---- 🛡️ adaptive risk (protects against ×2 losses) ----
-RISK_ADAPTIVE_ENABLED = True    # risk manager watches recent performance
-RISK_LOOKBACK = 10              # last N closed trades evaluated
-RISK_BAD_WR = 0.45              # if win rate below this → de-risk
-RISK_BAD_NET = 0.0              # if net pnl over lookback below this → de-risk
-RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
-RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
-RISK_RESUME_MIN = 3             # re-evaluate after N minutes
-
-# ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
-# nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
-FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
-FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
-
-# ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
-# VETËM dollarë të plotë: $1, $2, $3, $4, $5 — kurrë centa (p.sh. JO $1.04).
-# Fitimi neto (pas tarifave) matet kundrejt shkallës dhe kapet si dollar i plotë.
-PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
-
-# ---- 🧩 ensemble (hundreds of strategy variants) ----
-ENSEMBLE_ENABLED = True          # strategy variants vote with the core
-AGENT_TARGET = 100_000          # 100,000 agjentë (variante strategjike) që bashkëpunojnë me vota.
-                                 # Çdo cikël voton një mostër rrotulluese (shpejtësia mbetet e njëjtë);
-                                 # çdo familje (EMA, RSI, MACD…) ka një zë të barabartë.
-
-
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
@@ -125,18 +90,6 @@ WATCHLIST = [
     ("LTC-USDT", None, None),
     ("TRX-USDT", None, None),
     ("UNI-USDT", None, None),
-    ("TIA-USDT", None, None),
-    ("SEI-USDT", None, None),
-    ("WIF-USDT", None, None),
-    ("AAVE-USDT", None, None),
-    ("LDO-USDT", None, None),
-    ("FET-USDT", None, None),
-    ("RENDER-USDT", None, None),
-    ("HBAR-USDT", None, None),
-    ("ALGO-USDT", None, None),
-    ("ATOM-USDT", None, None),
-    ("ETC-USDT", None, None),
-    ("FIL-USDT", None, None),
 ]
 
 OKX_BAR = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
@@ -1069,135 +1022,6 @@ def slow_trend(symbol, k, ticker):
 
 
 # ---------------------------------------------------------------------------
-# 🆕 Extra strategies (agents 11-16)
-# ---------------------------------------------------------------------------
-def supertrend(symbol, k, ticker):
-    """Supertrend: trend i fortë me kthim drejtimi."""
-    closes = [c["c"] for c in k]
-    if len(closes) < 12:
-        return None
-    atr14 = atr([c["h"] for c in k], [c["l"] for c in k], closes, 14)
-    if atr14 <= 0:
-        return None
-    factor = 3.0
-    upper = closes[-1] + factor * atr14
-    lower = closes[-1] - factor * atr14
-    # drejtimi i fundit i Supertrend-it (bazuar në mbyllje kundrejt brezave)
-    if closes[-1] > lower and closes[-2] > lower:
-        return {"direction": "LONG", "confidence": 58}
-    if closes[-1] < upper and closes[-2] < upper:
-        return {"direction": "SHORT", "confidence": 58}
-    return None
-
-
-def adx_trend(symbol, k, ticker):
-    """ADX: sa i fortë është trendi aktual."""
-    highs = [c["h"] for c in k]
-    lows = [c["l"] for c in k]
-    closes = [c["c"] for c in k]
-    if len(closes) < 20:
-        return None
-    # llogarit ADX thjeshtuar: DM+/DM- dhe TR
-    trs, pdm, ndm = [], [], []
-    for i in range(1, len(closes)):
-        tr = max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
-        up = highs[i] - highs[i-1]
-        dn = lows[i-1] - lows[i]
-        pdm.append(up if (up > dn and up > 0) else 0.0)
-        ndm.append(dn if (dn > up and dn > 0) else 0.0)
-        trs.append(tr)
-    if not trs:
-        return None
-    atr14 = sum(trs[-14:]) / min(14, len(trs))
-    if atr14 <= 0:
-        return None
-    pdi = sum(pdm[-14:]) / atr14 * 100
-    ndi = sum(ndm[-14:]) / atr14 * 100
-    adx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0
-    e9 = ema(closes, 9)[-1]
-    e21 = ema(closes, 21)[-1]
-    if adx > 20 and pdi > ndi and e9 > e21:
-        return {"direction": "LONG", "confidence": min(90, 55 + adx / 3)}
-    if adx > 20 and ndi > pdi and e9 < e21:
-        return {"direction": "SHORT", "confidence": min(90, 55 + adx / 3)}
-    return None
-
-
-def vwap_break(symbol, k, ticker):
-    """VWAP: çmimi mbi/nën vwap me volumin përcjellës."""
-    closes = [c["c"] for c in k]
-    vols = [c["v"] for c in k]
-    if len(closes) < 10:
-        return None
-    tp = [c["h"] + c["l"] + c["c"] for c in k]
-    vwap = sum(tp[i] * vols[i] for i in range(len(k))) / (3 * sum(vols)) if sum(vols) > 0 else closes[-1]
-    vr = vol_ratio(vols)
-    if closes[-1] > vwap and vr > 1.2:
-        return {"direction": "LONG", "confidence": 57}
-    if closes[-1] < vwap and vr > 1.2:
-        return {"direction": "SHORT", "confidence": 57}
-    return None
-
-
-def williams_r(symbol, k, ticker):
-    """Williams %R: mbishitur / mbishitur."""
-    closes = [c["c"] for c in k]
-    if len(closes) < 15:
-        return None
-    hn = max(c["h"] for c in k[-14:])
-    ln = min(c["l"] for c in k[-14:])
-    if hn == ln:
-        return None
-    wr = (hn - closes[-1]) / (hn - ln) * -100
-    if wr < -85:
-        return {"direction": "LONG", "confidence": 58}
-    if wr > -15:
-        return {"direction": "SHORT", "confidence": 58}
-    return None
-
-
-def keltner_break(symbol, k, ticker):
-    """Keltner: shpërthim jashtë kanalit me trendin EMA."""
-    closes = [c["c"] for c in k]
-    if len(closes) < 22:
-        return None
-    e20 = ema(closes, 20)[-1]
-    a = atr([c["h"] for c in k], [c["l"] for c in k], closes, 20)
-    if a <= 0:
-        return None
-    if closes[-1] > e20 + 1.5 * a and closes[-1] > closes[-2]:
-        return {"direction": "LONG", "confidence": 57}
-    if closes[-1] < e20 - 1.5 * a and closes[-1] < closes[-2]:
-        return {"direction": "SHORT", "confidence": 57}
-    return None
-
-
-def obv_momentum(symbol, k, ticker):
-    """OBV: konfirmim i lëvizjes me volumin kumulativ."""
-    closes = [c["c"] for c in k]
-    vols = [c["v"] for c in k]
-    if len(closes) < 15:
-        return None
-    obv = [0.0]
-    for i in range(1, len(closes)):
-        if closes[i] > closes[i-1]:
-            obv.append(obv[-1] + vols[i])
-        elif closes[i] < closes[i-1]:
-            obv.append(obv[-1] - vols[i])
-        else:
-            obv.append(obv[-1])
-    obv_ema9 = ema(obv, 9)[-1]
-    obv_ema21 = ema(obv, 21)[-1]
-    e9 = ema(closes, 9)[-1]
-    e21 = ema(closes, 21)[-1]
-    if obv_ema9 > obv_ema21 and e9 > e21:
-        return {"direction": "LONG", "confidence": 56}
-    if obv_ema9 < obv_ema21 and e9 < e21:
-        return {"direction": "SHORT", "confidence": 56}
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Registry (order matters for display)
 # ---------------------------------------------------------------------------
 STRATEGIES = [
@@ -1211,634 +1035,10 @@ STRATEGIES = [
     {"name": "Donchian Break",   "icon": "🚀", "fn": donchian_breakout},
     {"name": "ROC Momentum",     "icon": "🏎️", "fn": roc_momentum},
     {"name": "Slow Trend",       "icon": "🐢", "fn": slow_trend},
-    {"name": "Supertrend",       "icon": "🌀", "fn": supertrend},
-    {"name": "ADX Trend",        "icon": "💪", "fn": adx_trend},
-    {"name": "VWAP Break",       "icon": "⚖️", "fn": vwap_break},
-    {"name": "Williams %R",      "icon": "🎯", "fn": williams_r},
-    {"name": "Keltner Break",    "icon": "📐", "fn": keltner_break},
-    {"name": "OBV Momentum",     "icon": "📦", "fn": obv_momentum},
 ]
-
-
-# ===========================================================================
-# 🧩 ENSEMBLE GENERATOR — creates up to AGENT_TARGET real strategy variants
-# by sweeping parameters across classic indicator templates. Each variant is
-# a real, runnable strategy — this is how professional quant ensembles work.
-# ===========================================================================
-def _v_ema(fast, slow):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < slow + 2:
-            return None
-        ef = ema(closes, fast)[-1]
-        es = ema(closes, slow)[-1]
-        if ef > es:
-            return {"direction": "LONG", "confidence": clamp(50 + abs(ef - es) / es * 600, 45, 82)}
-        if ef < es:
-            return {"direction": "SHORT", "confidence": clamp(50 + abs(ef - es) / es * 600, 45, 82)}
-        return None
-    return fn
-
-
-def _v_rsi(period, lo, hi):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        r = rsi(closes, period)
-        if r < lo:
-            return {"direction": "LONG", "confidence": clamp(52 + (lo - r) * 1.2, 46, 84)}
-        if r > hi:
-            return {"direction": "SHORT", "confidence": clamp(52 + (r - hi) * 1.2, 46, 84)}
-        return None
-    return fn
-
-
-def _v_macd(fast, slow, sig):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < slow + sig + 3:
-            return None
-        ef = ema(closes, fast)
-        es = ema(closes, slow)
-        line = [ef[i] - es[i] for i in range(len(es))]
-        sl = ema(line, sig)
-        if len(line) >= 2 and line[-2] <= sl[-2] and line[-1] > sl[-1]:
-            return {"direction": "LONG", "confidence": 55}
-        if len(line) >= 2 and line[-2] >= sl[-2] and line[-1] < sl[-1]:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
-
-
-def _v_boll(period, kk):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        vols = [c["v"] for c in k]
-        if len(closes) < period:
-            return None
-        mid = sum(closes[-period:]) / period
-        var = sum((c - mid) ** 2 for c in closes[-period:]) / period
-        sd = var ** 0.5
-        up = mid + kk * sd
-        lo = mid - kk * sd
-        vr = vol_ratio(vols)
-        if closes[-1] > up and vr > 1.1:
-            return {"direction": "LONG", "confidence": 56}
-        if closes[-1] < lo and vr > 1.1:
-            return {"direction": "SHORT", "confidence": 56}
-        return None
-    return fn
-
-
-def _v_mom(period, thr):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) <= period or closes[-period - 1] == 0:
-            return None
-        r = (closes[-1] - closes[-period - 1]) / closes[-period - 1] * 100
-        if r > thr:
-            return {"direction": "LONG", "confidence": clamp(50 + r * 8, 46, 80)}
-        if r < -thr:
-            return {"direction": "SHORT", "confidence": clamp(50 + abs(r) * 8, 46, 80)}
-        return None
-    return fn
-
-
-def _v_stoch(kp, dperiod):
-    def fn(symbol, k, ticker):
-        highs = [c["h"] for c in k]
-        lows = [c["l"] for c in k]
-        closes = [c["c"] for c in k]
-        if len(closes) < kp + 2:
-            return None
-        hn = max(highs[-kp:])
-        ln = min(lows[-kp:])
-        if hn == ln:
-            return None
-        kk = (closes[-1] - ln) / (hn - ln) * 100
-        if kk < 25:
-            return {"direction": "LONG", "confidence": 55}
-        if kk > 75:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
-
-
-def _v_atr(period, mult):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        a = atr([c["h"] for c in k], [c["l"] for c in k], closes, period)
-        if a <= 0 or len(closes) < 3:
-            return None
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        move = closes[-1] - closes[-3]
-        if move > mult * a and e9 > e21:
-            return {"direction": "LONG", "confidence": 55}
-        if move < -mult * a and e9 < e21:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
-
-
-def _v_supertrend(factor):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < 12:
-            return None
-        a = atr([c["h"] for c in k], [c["l"] for c in k], closes, 14)
-        if a <= 0:
-            return None
-        lower = closes[-1] - factor * a
-        upper = closes[-1] + factor * a
-        if closes[-1] > lower and closes[-2] > lower:
-            return {"direction": "LONG", "confidence": 57}
-        if closes[-1] < upper and closes[-2] < upper:
-            return {"direction": "SHORT", "confidence": 57}
-        return None
-    return fn
-
-
-def _v_adx(period, thr):
-    def fn(symbol, k, ticker):
-        highs = [c["h"] for c in k]
-        lows = [c["l"] for c in k]
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 5:
-            return None
-        pdm, ndm, trs = [], [], []
-        for i in range(1, len(closes)):
-            up = highs[i] - highs[i - 1]
-            dn = lows[i - 1] - lows[i]
-            pdm.append(up if (up > dn and up > 0) else 0.0)
-            ndm.append(dn if (dn > up and dn > 0) else 0.0)
-            trs.append(max(highs[i] - lows[i],
-                           abs(highs[i] - closes[i - 1]),
-                           abs(lows[i] - closes[i - 1])))
-        if not trs:
-            return None
-        a = sum(trs[-period:]) / min(period, len(trs))
-        if a <= 0:
-            return None
-        pdi = sum(pdm[-period:]) / a * 100
-        ndi = sum(ndm[-period:]) / a * 100
-        adxv = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        if adxv > thr and pdi > ndi and e9 > e21:
-            return {"direction": "LONG", "confidence": min(84, 54 + adxv / 4)}
-        if adxv > thr and ndi > pdi and e9 < e21:
-            return {"direction": "SHORT", "confidence": min(84, 54 + adxv / 4)}
-        return None
-    return fn
-
-
-def _v_vwap(period):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        vols = [c["v"] for c in k]
-        seg = k[-period:]
-        if len(seg) < 5:
-            return None
-        tps = [(c["h"] + c["l"] + c["c"]) / 3 for c in seg]
-        sv = sum(c["v"] for c in seg)
-        if sv <= 0:
-            return None
-        vwap = sum(tps[i] * seg[i]["v"] for i in range(len(seg))) / sv
-        vr = vol_ratio(vols)
-        if closes[-1] > vwap and vr > 1.05:
-            return {"direction": "LONG", "confidence": 56}
-        if closes[-1] < vwap and vr > 1.05:
-            return {"direction": "SHORT", "confidence": 56}
-        return None
-    return fn
-
-
-def _v_will(period, lo, hi):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 1:
-            return None
-        hn = max(c["h"] for c in k[-period:])
-        ln = min(c["l"] for c in k[-period:])
-        if hn == ln:
-            return None
-        wr = (hn - closes[-1]) / (hn - ln) * -100
-        if wr < lo:
-            return {"direction": "LONG", "confidence": 57}
-        if wr > hi:
-            return {"direction": "SHORT", "confidence": 57}
-        return None
-    return fn
-
-
-def _v_obv(period):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        vols = [c["v"] for c in k]
-        if len(closes) < 15:
-            return None
-        obv = [0.0]
-        for i in range(1, len(closes)):
-            if closes[i] > closes[i - 1]:
-                obv.append(obv[-1] + vols[i])
-            elif closes[i] < closes[i - 1]:
-                obv.append(obv[-1] - vols[i])
-            else:
-                obv.append(obv[-1])
-        eo = ema(obv, 9)[-1]
-        es = ema(obv, 21)[-1]
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        if eo > es and e9 > e21:
-            return {"direction": "LONG", "confidence": 55}
-        if eo < es and e9 < e21:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
-
-
-def _v_keltner(period, mult):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 3:
-            return None
-        e = ema(closes, period)[-1]
-        a = atr([c["h"] for c in k], [c["l"] for c in k], closes, period)
-        if a <= 0:
-            return None
-        if closes[-1] > e + mult * a and closes[-1] > closes[-2]:
-            return {"direction": "LONG", "confidence": 56}
-        if closes[-1] < e - mult * a and closes[-1] < closes[-2]:
-            return {"direction": "SHORT", "confidence": 56}
-        return None
-    return fn
-
-
-def generate_variant_strategies(target=1000):
-    """Build up to `target` real strategy variants by sweeping parameter grids.
-    100,000 variante unike, DETERMINISTIKE (po këto çdo herë)."""
-    combos = []
-    _rr = __import__("random").Random(20260808)   # i izoluar: nuk prish random-in global
-    for f, s in [(3, 7), (4, 9), (5, 10), (5, 13), (6, 12), (7, 15), (8, 17), (9, 21),
-                 (10, 22), (11, 24), (12, 26), (13, 27), (14, 28), (15, 30), (16, 34),
-                 (17, 35), (18, 40), (19, 41), (20, 50), (21, 43), (22, 45), (25, 55),
-                 (26, 52), (28, 60), (30, 60), (34, 70), (40, 80), (3, 9), (4, 12), (6, 18),
-                 (7, 21), (8, 24), (10, 30), (12, 36), (15, 45), (18, 54)]:
-        combos.append(("EMA(" + str(f) + "," + str(s) + ")", _v_ema(f, s)))
-    for p, lo, hi in [(5, 30, 70), (7, 30, 70), (7, 25, 75), (9, 30, 70), (10, 28, 72),
-                      (14, 30, 70), (14, 25, 75), (14, 20, 80), (14, 35, 65), (21, 30, 70),
-                      (21, 35, 65), (21, 25, 75), (28, 30, 70), (28, 25, 75), (35, 25, 75),
-                      (35, 20, 80), (42, 30, 70), (3, 20, 80), (6, 28, 72), (11, 30, 70),
-                      (13, 28, 72), (16, 30, 70), (22, 30, 70), (30, 30, 70), (4, 25, 75),
-                      (8, 30, 70), (12, 25, 75), (15, 30, 70), (18, 30, 70), (20, 30, 70),
-                      (25, 30, 70), (27, 30, 70), (33, 30, 70), (38, 30, 70), (45, 30, 70)]:
-        combos.append(("RSI(" + str(p) + "," + str(lo) + "/" + str(hi) + ")", _v_rsi(p, lo, hi)))
-    for f, s, g in [(4, 11, 4), (5, 13, 5), (6, 14, 5), (7, 16, 6), (8, 17, 9),
-                    (9, 21, 7), (10, 22, 7), (11, 25, 8), (12, 26, 9), (12, 26, 5),
-                    (13, 28, 9), (15, 30, 10), (16, 32, 9), (20, 40, 10), (5, 13, 9),
-                    (8, 17, 5), (10, 22, 9), (14, 30, 9), (18, 36, 9), (24, 52, 9),
-                    (6, 19, 6), (3, 10, 5), (17, 34, 8), (21, 42, 10),
-                    (5, 20, 7), (7, 18, 6), (9, 25, 8), (11, 30, 9), (13, 35, 10),
-                    (14, 31, 7), (16, 38, 8), (19, 44, 9), (22, 50, 10), (26, 58, 11),
-                    (30, 64, 12), (2, 8, 4), (8, 30, 8), (10, 35, 10), (15, 45, 12)]:
-        combos.append(("MACD(" + str(f) + "," + str(s) + "," + str(g) + ")", _v_macd(f, s, g)))
-    for p, kk in [(10, 2.0), (14, 2.0), (14, 2.5), (18, 1.8), (20, 1.5), (20, 2.0),
-                  (20, 2.5), (20, 3.0), (26, 2.0), (30, 2.0), (34, 2.0), (40, 2.0),
-                  (14, 1.5), (26, 2.5), (30, 2.5), (44, 2.0), (20, 1.2), (60, 2.0)]:
-        combos.append(("BOLL(" + str(p) + "," + str(kk) + ")", _v_boll(p, kk)))
-    for p, t in [(3, 0.8), (5, 0.5), (6, 0.7), (7, 0.6), (8, 0.5), (10, 0.4), (12, 0.4),
-                 (14, 0.35), (20, 0.3), (25, 0.28), (30, 0.25), (50, 0.2), (4, 0.6), (9, 0.5),
-                 (15, 0.32), (18, 0.3), (40, 0.22), (5, 0.35), (10, 0.55), (20, 0.2),
-                 (2, 1.0), (11, 0.45), (13, 0.38), (16, 0.33), (22, 0.3), (28, 0.26), (35, 0.24),
-                 (45, 0.2), (60, 0.18), (4, 0.75), (7, 0.55), (12, 0.42), (17, 0.31), (24, 0.28)]:
-        combos.append(("MOM(" + str(p) + "," + str(t) + ")", _v_mom(p, t)))
-    for kp, dp in [(7, 3), (9, 3), (10, 3), (14, 3), (14, 5), (17, 4), (21, 5), (28, 7),
-                    (5, 3), (12, 3), (18, 4), (24, 6), (30, 8), (10, 5), (21, 3), (35, 7),
-                    (4, 3), (6, 3), (8, 3), (11, 3), (13, 3), (15, 3), (16, 4), (19, 4),
-                    (20, 4), (22, 5), (25, 5), (26, 6), (32, 8), (40, 9)]:
-        combos.append(("STOCH(" + str(kp) + ")", _v_stoch(kp, dp)))
-    for p, m in [(14, 1.0), (14, 1.5), (21, 1.0), (10, 1.0), (14, 2.0), (28, 1.2)]:
-        combos.append(("ATR(" + str(p) + "," + str(m) + ")", _v_atr(p, m)))
-    for f in [2.0, 3.0, 4.0, 2.5, 3.5, 5.0]:
-        combos.append(("SUPERTREND(" + str(f) + ")", _v_supertrend(f)))
-    for p, t in [(14, 20), (14, 25), (21, 20), (10, 20), (28, 25), (7, 20)]:
-        combos.append(("ADX(" + str(p) + "," + str(t) + ")", _v_adx(p, t)))
-    for p in [10, 20, 30, 14, 40, 8, 25]:
-        combos.append(("VWAP(" + str(p) + ")", _v_vwap(p)))
-    for p, lo, hi in [(14, -85, -15), (14, -80, -20), (21, -85, -15), (7, -85, -15),
-                      (14, -90, -10), (28, -80, -20)]:
-        combos.append(("WILL(" + str(p) + ")", _v_will(p, lo, hi)))
-    for p in [14, 9, 21, 7, 28, 12]:
-        combos.append(("OBV(" + str(p) + ")", _v_obv(p)))
-    for p, m in [(20, 1.5), (20, 2.0), (30, 1.5), (14, 1.5), (20, 2.5), (26, 1.8)]:
-        combos.append(("KELT(" + str(p) + "," + str(m) + ")", _v_keltner(p, m)))
-    for p, m in [(10, 1.0), (14, 1.0), (14, 1.5), (14, 2.0), (21, 1.0), (28, 1.2), (7, 1.0), (10, 1.5), (21, 1.5), (28, 2.0), (35, 1.0), (14, 3.0)]:
-        combos.append(("ATR(" + str(p) + "," + str(m) + ")", _v_atr(p, m)))
-    for f in [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 1.0, 1.2, 1.8, 2.2, 2.8, 3.2, 4.5, 7.0]:
-        combos.append(("SUPERTREND(" + str(f) + ")", _v_supertrend(f)))
-    for p, t in [(7, 20), (10, 20), (14, 20), (14, 25), (21, 20), (28, 25), (5, 15), (18, 25),
-                 (9, 22), (12, 18), (16, 25), (20, 22), (25, 20), (35, 25), (42, 20), (6, 18), (8, 15), (30, 30)]:
-        combos.append(("ADX(" + str(p) + "," + str(t) + ")", _v_adx(p, t)))
-    for p in [8, 10, 14, 20, 25, 30, 40, 50, 6, 12, 16, 18, 22, 35, 45, 60, 75, 90]:
-        combos.append(("VWAP(" + str(p) + ")", _v_vwap(p)))
-    for p, lo, hi in [(7, -85, -15), (14, -85, -15), (14, -80, -20), (14, -90, -10),
-                      (21, -85, -15), (28, -80, -20), (35, -85, -15), (10, -85, -15),
-                      (5, -85, -15), (9, -85, -15), (12, -85, -15), (17, -85, -15),
-                      (24, -85, -15), (30, -85, -15), (42, -85, -15), (14, -75, -25)]:
-        combos.append(("WILL(" + str(p) + ")", _v_will(p, lo, hi)))
-    for p in [7, 9, 12, 14, 21, 28, 35, 42, 5, 8, 11, 16, 20, 25, 30, 38, 46, 52, 60, 68]:
-        combos.append(("OBV(" + str(p) + ")", _v_obv(p)))
-    for p, m in [(14, 1.5), (20, 1.5), (20, 2.0), (20, 2.5), (26, 1.8), (30, 1.5), (34, 2.0), (10, 1.5),
-                 (14, 2.0), (20, 3.0), (26, 2.2), (30, 2.5), (40, 2.0), (10, 2.0), (50, 2.0), (60, 2.5)]:
-        combos.append(("KELT(" + str(p) + "," + str(m) + ")", _v_keltner(p, m)))
-    # --- extra templates ---
-    for p, t in [(10, 100), (14, 100), (20, 100), (21, 100), (30, 100), (10, 150),
-                 (14, 150), (20, 150), (30, 150), (14, 120), (21, 120), (10, 200), (20, 200), (40, 100),
-                 (5, 100), (7, 100), (12, 100), (16, 100), (24, 100), (35, 100),
-                 (14, 80), (20, 80), (30, 80), (14, 180), (20, 180), (14, 250), (20, 250)]:
-        combos.append(("CCI(" + str(p) + "," + str(t) + ")", _v_cci(p, t)))
-    for p, h in [(14, 80), (14, 85), (14, 90), (21, 80), (21, 85), (28, 80), (7, 85), (10, 80), (35, 85),
-                 (5, 80), (9, 80), (12, 85), (17, 80), (24, 85), (30, 80), (40, 90), (14, 75), (21, 90), (7, 80)]:
-        combos.append(("MFI(" + str(p) + "," + str(h) + ")", _v_mfi(p, h)))
-    for f, s in [(5, 20), (10, 30), (10, 50), (20, 50), (20, 100), (30, 100), (50, 200),
-                 (5, 10), (10, 20), (15, 30), (20, 40), (25, 50), (40, 80), (60, 120)]:
-        combos.append(("SMA(" + str(f) + "," + str(s) + ")", _v_sma(f, s)))
-    for f, s, lo, hi in [(5, 13, 40, 80), (9, 21, 40, 80), (12, 26, 40, 80), (20, 50, 45, 75),
-                         (5, 13, 35, 85), (9, 21, 45, 75), (12, 26, 35, 85), (20, 50, 40, 80),
-                         (7, 15, 40, 80), (10, 22, 40, 80), (15, 30, 40, 80), (25, 55, 40, 80),
-                         (5, 13, 30, 70), (9, 21, 30, 70), (12, 26, 30, 70), (20, 50, 30, 70),
-                         (6, 14, 40, 80), (8, 17, 40, 80), (11, 24, 40, 80), (18, 40, 40, 80)]:
-        combos.append(("EMARSI(" + str(f) + "," + str(s) + ")", _v_ema_rsi(f, s, lo, hi)))
-    for p, t in [(9, 1), (14, 1), (21, 1), (28, 1), (9, 2), (14, 2), (21, 2), (28, 2), (35, 1), (42, 1),
-                 (5, 1), (11, 1), (17, 1), (24, 1), (32, 1), (49, 1), (7, 2), (12, 2), (19, 2), (27, 2),
-                 (6, 1), (8, 1), (10, 1), (13, 1), (16, 1), (20, 1), (23, 1), (26, 1), (30, 1), (38, 1),
-                 (50, 1), (60, 1), (4, 2), (10, 2), (15, 2), (22, 2), (30, 2), (40, 2)]:
-        combos.append(("TRIX(" + str(p) + ")", _v_trix(p)))
-    for _ in range(4):
-        combos.append(("ENGULF", _v_engulf()))
-    for f, s in [(3, 10), (5, 15), (5, 20), (10, 30), (10, 50), (15, 40), (20, 60), (5, 25), (8, 24), (12, 36), (6, 18), (30, 90),
-                 (4, 12), (7, 21), (9, 27), (11, 33), (14, 42), (16, 48), (18, 54), (22, 66), (25, 75), (28, 84),
-                 (3, 9), (6, 21), (8, 30), (10, 40), (12, 48), (15, 60), (20, 80), (24, 96),
-                 (2, 6), (2, 8), (3, 8), (4, 16), (5, 30), (6, 24), (7, 28), (9, 36), (10, 45), (11, 44),
-                 (13, 52), (17, 68), (19, 76), (21, 84), (23, 92), (26, 78), (29, 87), (32, 64)]:
-        combos.append(("DUALMOM(" + str(f) + "," + str(s) + ")", _v_dual_mom(f, s)))
-    for p in [9, 14, 21, 28, 35, 50, 70, 100, 12, 17, 25, 32, 42, 60, 85, 130, 8, 16, 30, 45, 55, 65, 80, 120,
-                  7, 10, 11, 13, 15, 18, 19, 20, 22, 23, 24, 26, 27, 29, 31, 33, 34, 36, 38, 40, 44, 46, 48, 52, 56, 58, 62, 66, 68, 72, 74, 76, 78, 82, 84, 86, 88, 90, 95, 105, 110, 115, 125, 135, 140, 145, 150, 160, 170, 180, 190, 200, 250, 300]:
-        combos.append(("BTREND(" + str(p) + ")", _v_breakeven_trend(p)))
-    for _ in range(8):
-        combos.append(("PSAR", _v_psar(0.02)))
-    # --- 🔧 TOP-UP deri në `target` (1000 agjentë): variante shtesë të
-    # gjeneruara në mënyrë DETERMINISTIKE (po këto çdo herë, që peshat
-    # e mësuara nga Learning të mos prishen). Çdo familje zëvendësohet
-    # në mënyrë të barabartë që asnjë familje të mos dominojë votimin. ---
-    if len(combos) < target:
-        # hiq dublikatat nga baza (p.sh. ATR(14,1.0) në 2 sythe), që
-        # target-i të arrihet saktësisht
-        _seen0 = set()
-        _dedup = []
-        for _n0, _f0 in combos:
-            if _n0 in _seen0:
-                continue
-            _seen0.add(_n0)
-            _dedup.append((_n0, _f0))
-        combos = _dedup
-        def _mk_ema():
-            f = _rr.randint(2, 30); s = _rr.randint(f + 3, 90)
-            return f"EMA({f},{s})", _v_ema(f, s)
-        def _mk_rsi():
-            p = _rr.randint(3, 45); lo = _rr.randint(18, 38); hi = _rr.randint(62, 84)
-            return f"RSI({p},{lo}/{hi})", _v_rsi(p, lo, hi)
-        def _mk_macd():
-            f = _rr.randint(2, 16); s = _rr.randint(f + 3, 40); g = _rr.randint(3, 12)
-            return f"MACD({f},{s},{g})", _v_macd(f, s, g)
-        def _mk_boll():
-            p = _rr.randint(5, 60); kk = round(_rr.uniform(1.2, 3.0), 1)
-            return f"BOLL({p},{kk})", _v_boll(p, kk)
-        def _mk_mom():
-            p = _rr.randint(2, 60); t = round(_rr.uniform(0.15, 0.85), 2)
-            return f"MOM({p},{t})", _v_mom(p, t)
-        def _mk_stoch():
-            kp = _rr.randint(4, 40); dp = _rr.randint(3, 9)
-            return f"STOCH({kp})", _v_stoch(kp, dp)
-        def _mk_atr():
-            p = _rr.randint(7, 40); m = round(_rr.uniform(1.0, 3.0), 1)
-            return f"ATR({p},{m})", _v_atr(p, m)
-        def _mk_emarsi():
-            f = _rr.randint(3, 25); s = _rr.randint(f + 2, 60)
-            lo = _rr.randint(20, 40); hi = _rr.randint(60, 85)
-            return f"EMARSI({f},{s},{lo}/{hi})", _v_ema_rsi(f, s, lo, hi)
-        def _mk_dual():
-            f = _rr.randint(2, 20); s = _rr.randint(f * 2, f * 4 + 20)
-            return f"DUALMOM({f},{s})", _v_dual_mom(f, s)
-        def _mk_btrend():
-            p = _rr.randint(5, 200)
-            return f"BTREND({p})", _v_breakeven_trend(p)
-        makers = [_mk_ema, _mk_rsi, _mk_macd, _mk_boll, _mk_mom, _mk_stoch,
-                  _mk_atr, _mk_emarsi, _mk_dual, _mk_btrend]
-        used = {n for n, _ in combos}
-        mi = 0
-        guard = 0
-        while len(combos) < target and guard < target * 20:
-            guard += 1
-            mi = (mi + 1) % len(makers)
-            name, fn = makers[mi]()
-            if name in used:
-                continue
-            used.add(name)
-            combos.append((name, fn))
-    # dedupe names
-    seen = set()
-    out = []
-    for name, fn in combos:
-        if name in seen:
-            continue
-        seen.add(name)
-        out.append({"name": name, "icon": "🧩", "fn": fn})
-        if len(out) >= target:
-            break
-    # përzierje deterministe — mostrat rrotulluese dalin nga të gjitha
-    # familjet në çdo cikël (jo vetëm nga një bllok i listës)
-    _rr.shuffle(out)
-    return out
-
-
-# ---------- more ensemble templates ----------
-def _v_cci(period, thr):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period:
-            return None
-        tp = [(c["h"] + c["l"] + c["c"]) / 3 for c in k[-period:]]
-        mean = sum(tp) / len(tp)
-        md = sum(abs(t - mean) for t in tp) / len(tp)
-        if md == 0:
-            return None
-        cci = (tp[-1] - mean) / (0.015 * md)
-        if cci > thr:
-            return {"direction": "LONG", "confidence": 56}
-        if cci < -thr:
-            return {"direction": "SHORT", "confidence": 56}
-        return None
-    return fn
-
-
-def _v_mfi(period, hi):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 1:
-            return None
-        pos = neg = 0.0
-        for i in range(-period, 0):
-            tp0 = (k[i - 1]["h"] + k[i - 1]["l"] + k[i - 1]["c"]) / 3
-            tp1 = (k[i]["h"] + k[i]["l"] + k[i]["c"]) / 3
-            mf = tp1 * k[i]["v"]
-            if tp1 > tp0:
-                pos += mf
-            elif tp1 < tp0:
-                neg += mf
-        if neg == 0:
-            return None
-        mfi = 100 - 100 / (1 + pos / neg)
-        if mfi < 100 - hi:
-            return {"direction": "LONG", "confidence": 56}
-        if mfi > hi:
-            return {"direction": "SHORT", "confidence": 56}
-        return None
-    return fn
-
-
-def _v_sma(fast, slow):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < slow + 2:
-            return None
-        sf = sum(closes[-fast:]) / fast
-        ss = sum(closes[-slow:]) / slow
-        if sf > ss:
-            return {"direction": "LONG", "confidence": clamp(50 + (sf - ss) / ss * 500, 45, 80)}
-        if sf < ss:
-            return {"direction": "SHORT", "confidence": clamp(50 + (ss - sf) / ss * 500, 45, 80)}
-        return None
-    return fn
-
-
-def _v_ema_rsi(fast, slow, lo, hi):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < slow + 2:
-            return None
-        ef = ema(closes, fast)[-1]
-        es = ema(closes, slow)[-1]
-        r = rsi(closes, 14)
-        if ef > es and r > 50 and r < hi:
-            return {"direction": "LONG", "confidence": clamp(50 + (r - 50) * 0.8, 48, 84)}
-        if ef < es and r < 50 and r > lo:
-            return {"direction": "SHORT", "confidence": clamp(50 + (50 - r) * 0.8, 48, 84)}
-        return None
-    return fn
-
-
-def _v_pullback(period, dist):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 3:
-            return None
-        ef = ema(closes, period)[-1]
-        e21 = ema(closes, 21)[-1]
-        if e21 > ef:  # trend up
-            return None
-        if e21 < ef:
-            return None
-        return None
-    return fn
-
-
-def _v_engulf():
-    def fn(symbol, k, ticker):
-        if len(k) < 3:
-            return None
-        o0, c0 = k[-2]["o"], k[-2]["c"]
-        o1, c1 = k[-1]["o"], k[-1]["c"]
-        if c0 < o0 and c1 > o1 and o1 <= c0 and c1 > o0:
-            return {"direction": "LONG", "confidence": 60}
-        if c0 > o0 and c1 < o1 and o1 >= c0 and c1 < o0:
-            return {"direction": "SHORT", "confidence": 60}
-        return None
-    return fn
-
-
-def _v_trix(period):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period * 3 + 4:
-            return None
-        e1 = ema(closes, period)
-        e2 = ema(e1, period)
-        e3 = ema(e2, period)
-        if len(e3) < 3:
-            return None
-        t = (e3[-1] - e3[-2]) / e3[-2] * 100 if e3[-2] else 0
-        tprev = (e3[-2] - e3[-3]) / e3[-3] * 100 if e3[-3] else 0
-        if t > 0 and tprev <= 0:
-            return {"direction": "LONG", "confidence": 57}
-        if t < 0 and tprev >= 0:
-            return {"direction": "SHORT", "confidence": 57}
-        return None
-    return fn
-
-
-def _v_psar(af_start):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < 12:
-            return None
-        # naive PSAR estimate via short trend
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        if e9 > e21:
-            return {"direction": "LONG", "confidence": 55}
-        if e9 < e21:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
-
-
-def _v_dual_mom(fast, slow):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        vols = [c["v"] for c in k]
-        if len(closes) <= slow or closes[-slow - 1] == 0:
-            return None
-        rm = (closes[-1] - closes[-slow - 1]) / closes[-slow - 1] * 100
-        rf = (closes[-1] - closes[-min(fast, len(closes) - 1) - 1]) / \
-            closes[-min(fast, len(closes) - 1) - 1] * 100 if closes[-min(fast, len(closes) - 1) - 1] else 0
-        vr = vol_ratio(vols)
-        if rf > 0 and rm > 0 and vr > 1.0:
-            return {"direction": "LONG", "confidence": clamp(52 + min(rf, 2) * 10, 48, 84)}
-        if rf < 0 and rm < 0 and vr > 1.0:
-            return {"direction": "SHORT", "confidence": clamp(52 + min(abs(rf), 2) * 10, 48, 84)}
-        return None
-    return fn
-
-
-def _v_breakeven_trend(period):
-    def fn(symbol, k, ticker):
-        closes = [c["c"] for c in k]
-        if len(closes) < period + 2:
-            return None
-        e = ema(closes, period)[-1]
-        if closes[-1] > e and closes[-2] > e:
-            return {"direction": "LONG", "confidence": 55}
-        if closes[-1] < e and closes[-2] < e:
-            return {"direction": "SHORT", "confidence": 55}
-        return None
-    return fn
 # ============ learning.py ============
 """
-Waynis AI — ENHANCED LEARNING SYSTEM for the 28 core agents + 100,000-variant ensemble.
-
-Learning is done per STRATEGY FAMILY (EMA, RSI, MACD, ...) so the weights
-file stays tiny even with 100,000 registered variants.
+Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
 
 After every closed trade we attribute its PnL to the strategies that voted
 for it (trade.votes) and recompute, per strategy:
@@ -1868,12 +1068,6 @@ import time
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "data", "learning_history.json")
 
-def family_key(name):
-    """P.sh. 'EMA(3,7)' → 'EMA'; 'EMA Trend' mbetet 'EMA Trend'.
-    Kështu mësimi bëhet në nivel familjeje edhe me 100,000 variante."""
-    return name.split("(")[0] if "(" in name else name
-
-
 DEFAULT_STATS = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0,
                  "gross_win": 0.0, "gross_loss": 0.0, "recent": [],
                  "weight": 1.0, "updated_at": None}
@@ -1889,7 +1083,7 @@ HISTORY_MAX = 240           # learning-curve points kept
 # ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
-def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
+def compute_weight(st):
     t = st["trades"]
     if t == 0:
         return 1.0
@@ -1904,15 +1098,15 @@ def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
     w += max(-0.40, min(0.40, wr * 0.50))                 # win-rate edge
     w += max(-0.20, min(0.25, (pf - 1.0) * 0.15))         # profit-factor edge
     w += max(-0.25, min(0.30, rec / 40.0))                # recency
-    if t < explore_min:                                   # exploration bonus
-        w += (explore_min - t) / explore_min * 0.25
+    if t < EXPLORE_MIN_TRADES:                            # exploration bonus
+        w += (EXPLORE_MIN_TRADES - t) / EXPLORE_MIN_TRADES * 0.25
     return max(WEIGHT_MIN, min(WEIGHT_MAX, round(w, 3)))
 
 
 # ---------------------------------------------------------------------------
 # Aggregate per-strategy stats from the trades table
 # ---------------------------------------------------------------------------
-def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
+def aggregate_from_trades(conn, last_id=0):
     """Returns (stats dict keyed by strategy name, max trade id processed)."""
     rows = conn.execute(
         "SELECT id, votes, status, pnl FROM trades "
@@ -1928,7 +1122,6 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
         except Exception:
             continue
         for name in names:
-            name = family_key(name)              # mësim në nivel familjeje
             st = stats.setdefault(name, dict(DEFAULT_STATS))
             st["trades"] += 1
             p = pnl or 0.0
@@ -1943,7 +1136,7 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
             if len(st["recent"]) > RECENT_WINDOW:
                 st["recent"] = st["recent"][-RECENT_WINDOW:]
     for name, st in stats.items():
-        st["weight"] = compute_weight(st, explore_min)
+        st["weight"] = compute_weight(st)
         st["updated_at"] = time.time()
         # keep the dict clean for JSON
         st["recent"] = [round(x, 2) for x in st["recent"][-10:]]
@@ -1969,17 +1162,15 @@ def enrich(stats):
 # Meta-learning: adaptive consensus threshold from rolling system results
 # ---------------------------------------------------------------------------
 def meta_threshold(recent_results, base=BASE_THRESHOLD):
-    """base = user preference (default 0.05). The system nudges it:
-    winning → looser (0.8×), losing → stricter (1.6×), clamped 0.03..0.12."""
     if not recent_results:
-        return round(base, 3)
+        return base
     wins = sum(1 for r in recent_results if r > 0)
     wr = wins / len(recent_results)
     if wr >= 0.55:
         return round(max(0.03, base * 0.8), 3)      # exploit — looser
     if wr <= 0.42:
-        return round(min(0.12, base * 1.6), 3)      # conserve — stricter
-    return round(base, 3)
+        return round(min(0.10, base * 1.6), 3)      # conserve — stricter
+    return base
 
 
 def system_win_rate(recent_results):
@@ -2005,8 +1196,6 @@ def load_weights():
 
 def save_weights(stats):
     try:
-        # ruaj vetëm familjet/strategjitë me të dhëna — skedari mbetet i vogël
-        stats = {k: v for k, v in stats.items() if v.get("trades", 0) > 0}
         os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
         with open(WEIGHTS_PATH, "w") as f:
             json.dump(stats, f, indent=2)
@@ -2207,9 +1396,9 @@ def summarize(results):
     }
 # ============ agents.py ============
 """
-Waynis AI — 28 AGENTË bërthamë + 1000 VARIANTE strategjike (ensemble) që bashkëpunojnë.
+Waynis AI — 20-AGENT collaborative control system.
 
-Boti drejtohet nga 28 agjentë të specializuar + 1000 variante strategjike që votojnë së bashku (çdo familje ka një zë të barabartë) dhe MËSOJNË:
+The bot is run by TWENTY specialised agents that work together and LEARN:
 
   Phase 1  SCAN    1.  📡 Scanner          — fetches live prices + candles
   Phase 2  PREDICT 2.  📈 EMA Trend        — trend follower
@@ -2245,7 +1434,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, COOLDOWN_SEC, TRADE_TF, KLINES_TTL, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -2293,7 +1482,6 @@ class CycleContext:
         self.candles = {}
         self.votes = {}            # symbol -> [(name, direction, conf)]
         self.chosen = None         # consensus candidate
-        self.picks = []            # grid: LONG + SHORT candidates
         self.votes_for_trade = []  # strategy names behind the chosen signal
         self.qty = 0.0
         self.trade_id = None
@@ -2332,24 +1520,22 @@ class ScannerAgent(Agent):
         e.last_tickers = tickers
 
         syms = [w[0] for w in WATCHLIST]
+        open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
-        # scan ALL symbols INCLUDING open positions — the tracker needs
-        # fresh candles on open positions to decide smart exits.
-        batch = syms[:]
+        batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
 
         scanned = []
         for sym in batch:
-            # use cache when fresh — skips the network call → much faster cycles
-            klines = e.get_klines_cached(sym, TRADE_TF, 60, ttl=KLINES_TTL)
-            if klines is None:
-                klines = await ctx.market.fetch_klines(sym, TRADE_TF, 60)
-                if len(klines) >= 30:
-                    e.klines_cache[(sym, TRADE_TF)] = (time.time(), klines)
+            if sym in open_syms:
+                continue
+            if sym in e.cooldown and now - e.cooldown[sym] < 300:
+                continue
+            klines = await ctx.market.fetch_klines(sym, "1m", 60)
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.04)
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")
@@ -2392,217 +1578,38 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 
 
 # ======================================================================
-# 🧩 ENSEMBLE VOTER — runs up to 500 strategy variants on the leading
-# candidate, so the final decision reflects the whole ensemble.
-# ======================================================================
-class EnsembleVoterAgent(Agent):
-    step, name, icon = 1, "Ensemble", "🧩"
-    role = "1000 variante strategjike votojnë për kandidatin kryesor"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        variants = getattr(e, "variant_strategies", [])
-        if not variants or not ctx.votes:
-            return
-        n = len(variants)
-        # 🔁 MOSTËR RROTULLUESE: me 100,000 agjentë nuk i ekzekutojmë të
-        # gjithë çdo cikël (do ishte ~2s/3s) — çdo cikël voton një mostër
-        # e përzier prej SAMPLE_N agjentësh; me kalimin e kohës TË GJITHË
-        # 100,000 marrin pjesë njësoj shpesh (bashkëpunim i plotë).
-        SAMPLE_N = 1500
-        offset = (getattr(e, "ensemble_round", 0) * SAMPLE_N) % n
-        e.ensemble_round = (e.ensemble_round + 1) % max(1, (n + SAMPLE_N - 1) // SAMPLE_N)
-        sample = variants[offset:offset + SAMPLE_N]
-        if len(sample) < SAMPLE_N:                 # mbështjellje në fund
-            sample = sample + variants[:SAMPLE_N - len(sample)]
-        self._sample_n = SAMPLE_N
-        self._offset = offset
-        # pick the symbol with the strongest core consensus
-        best_sym = None
-        best_score = 0.0
-        for sym, votes in ctx.votes.items():
-            net = 0.0
-            for _, d, conf in votes:
-                net += (1.0 if d == "LONG" else -1.0) * (conf / 100.0)
-            if abs(net) > best_score:
-                best_score = abs(net)
-                best_sym = sym
-        if not best_sym:
-            return
-        klines = ctx.candles.get(best_sym)
-        if not klines:
-            return
-        ticker = ctx.tickers.get(best_sym)
-        voted = 0
-        votes_list = ctx.votes.setdefault(best_sym, [])
-        for v in sample:
-            try:
-                r = v["fn"](best_sym, klines, ticker)
-                if r:
-                    votes_list.append((v["name"], r["direction"],
-                                       r["confidence"]))
-                    voted += 1
-            except Exception:
-                continue
-        if voted:
-            self.report(f"🧩 {voted}/{len(sample)} agjentë (mostër "
-                        f"rrotulluese, nga 100,000) votuan për {best_sym} — "
-                        f"konsensus i plotë")
-        else:
-            self.report(f"🧩 mostër {len(sample)} agjentësh (100,000 gjithsej) "
-                        f"— asnjë sinjal i fortë")
-
-
-# ======================================================================
-# 🔀 GRID BALANCER — actively finds the missing side of the grid.
-# If longs dominate → it searches for overbought coins (RSI high) and
-# queues a SHORT; if shorts dominate → it finds oversold coins (RSI low)
-# and queues a LONG. This keeps the portfolio two-sided like a grid.
-# ======================================================================
-class GridBalancerAgent(Agent):
-    step, name, icon = 1, "Grid Balancer", "🔀"
-    role = "Balancues — kërkon në mënyrë aktive anën e munguar (SHORT/LONG)"
-
-    async def execute(self, ctx, idx):
-        e = self.engine
-        if e.mode == "real":
-            return                      # spot real = vetëm LONG
-        open_pos = e.open_positions()
-        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
-        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
-        if len(open_pos) >= MAX_OPEN:
-            return
-        imbalance = n_long - n_short
-
-        # anë që duhet (palca e gridit)
-        want = "SHORT" if imbalance >= 2 else ("LONG" if imbalance <= -2 else None)
-        if not want:
-            return
-        best = None
-        for sym, klines in ctx.candles.items():
-            if sym in {p["symbol"] for p in open_pos}:
-                continue
-            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
-                continue
-            if len(klines) < 30:
-                continue
-            closes = [c["c"] for c in klines]
-            r = rsi(closes)
-            price = (ctx.tickers.get(sym) or {}).get("price") or closes[-1]
-            if want == "SHORT" and r > 66:            # i mbingarkuar → SHORT
-                conf = 60 + (r - 66) * 1.2
-                if best is None or conf > best["confidence"]:
-                    best = {"symbol": sym, "direction": "SHORT",
-                            "entry": price, "confidence": min(conf, 88),
-                            "rsi": r}
-            elif want == "LONG" and r < 34:           # i mbishitur → LONG
-                conf = 60 + (34 - r) * 1.2
-                if best is None or conf > best["confidence"]:
-                    best = {"symbol": sym, "direction": "LONG",
-                            "entry": price, "confidence": min(conf, 88),
-                            "rsi": r}
-        if best:
-            sym = best["symbol"]
-            # vendose DREJTPËRDREJT te picks — Filler-i e hap pavarësisht
-            # konsensusit (kjo e mban grid-in të balancuar gjithmonë)
-            entry = best["entry"]
-            if best["direction"] == "LONG":
-                tp = entry * (1 + TAKE_PROFIT)
-                sl = entry * (1 - STOP_LOSS)
-            else:
-                tp = entry * (1 - TAKE_PROFIT)
-                sl = entry * (1 + STOP_LOSS)
-            pick = {"symbol": sym, "direction": best["direction"],
-                    "entry": entry, "tp": tp, "sl": sl,
-                    "confidence": best["confidence"],
-                    "supporting": ["GridBalancer"]}
-            # mos e dyfisho nëse konsensusi e ka tashmë
-            if not any(p["symbol"] == sym and p["direction"] == pick["direction"]
-                       for p in ctx.picks):
-                ctx.picks.append(pick)
-            self.report(f"🔀 Grid: kërkoj {want} — {sym} (RSI {best['rsi']:.0f}) "
-                        f"për ekuilibër {n_long}L/{n_short}S",
-                        sym, best["direction"], best["confidence"])
-        else:
-            self.report(f"🔀 Grid: {n_long}L/{n_short}S — "
-                        f"nuk gjeta sinjal {want} këtë cikël")
-
-
-# ======================================================================
-# 🗳️ CONSENSUS (combines votes with learning weights)
+# 🗳️ 12 — CONSENSUS (combines votes with learning weights)
 # ======================================================================
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
-    role = "Bashkëpunimi: kombinon votat e 1000 varianteve + strategjive me peshat e mësuara — çdo familje një zë"
+    role = "Kombinon votat e 10 strategjive me peshat e mësuara"
 
     async def execute(self, ctx, idx):
         e = self.engine
         weights = e.strategy_stats
         threshold = e.meta_state.get("threshold", 0.05)   # adaptive (meta-learning)
         rms = self._relative_strength(ctx)                # "arbitrage" across symbols
-        open_syms = {p["symbol"] for p in e.open_positions()}
-        # 🔀 grid balance: count open LONG vs SHORT — favour the rarer side
-        open_pos = e.open_positions()
-        n_long = sum(1 for p in open_pos if p["side"] == "LONG")
-        n_short = sum(1 for p in open_pos if p["side"] == "SHORT")
         candidates = []
 
         for sym, votes in ctx.votes.items():
-            if sym in open_syms:                # s'hapim pozicion të dytë
-                continue
-            if sym in e.cooldown and time.time() - e.cooldown[sym] < COOLDOWN_SEC:
-                continue                        # cooldown 45s pas mbylljes
-            # 🧩 BASHKËPUNIM 1000 AGJENTËSH: votat grupohen në FAMILJE
-            # (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, ...).
-            # Çdo familje ka NJË zë të barabartë → asnjë familje me shumë
-            # variante (p.sh. 300 EMA) nuk e dominon vendimin; familjet
-            # bashkëpunojnë dhe bien dakord bashkë.
-            fam = {}
-            for sname, d, conf in votes:
-                key = sname.split("(")[0] if "(" in sname else sname
-                f = fam.setdefault(key, [0.0, 0.0])
-                w = weights.get(sname, {}).get("weight", 1.0)
-                f[0] += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
-                f[1] += w
             net = 0.0
             tw = 0.0
-            for key, (fnet, fw) in fam.items():
-                if fw <= 0:
-                    continue
-                fw2 = weights.get(key, {}).get("weight", 1.0)   # pesha e mësuar e familjes
-                net += (fnet / fw) * fw2
-                tw += fw2
+            for sname, d, conf in votes:
+                w = weights.get(sname, {}).get("weight", 1.0)
+                net += (1.0 if d == "LONG" else -1.0) * w * (conf / 100.0)
+                tw += w
             if tw <= 0:
                 continue
-            score = net / tw                     # -1 .. 1 (peshuar sipas familjeve)
+            score = net / tw                     # -1 .. 1
             if score > threshold:
                 direction = "LONG"
             elif score < -threshold:
                 direction = "SHORT"
             else:
                 continue
-            # grid balance boost: if one side dominates, boost the other
-            if e.mode != "real":
-                if direction == "SHORT" and n_long > n_short:
-                    score = min(score * 1.0 + 0.05, 1.0)
-                elif direction == "LONG" and n_short > n_long:
-                    score = max(score - 0.05, -1.0)
-                if direction == "SHORT" and n_long - n_short >= 4:
-                    score = min(score + 0.05, 1.0)
-                elif direction == "LONG" and n_short - n_long >= 4:
-                    score = max(score - 0.05, -1.0)
-            # familjet që mbështesin drejtimin e zgjedhur
-            fam_sup = {}
-            for sname, d, c in votes:
-                key = sname.split("(")[0] if "(" in sname else sname
-                if d == direction:
-                    e2 = fam_sup.setdefault(key, [0, 0.0])
-                    e2[0] += 1
-                    e2[1] = max(e2[1], c)
-            supporting = [k for k in fam_sup]
-            # konsensus gride: 1 familje e fortë (≥65%) OSE 2+ familje
-            strong = [k for k, (cnt, mx) in fam_sup.items() if mx >= 65]
-            if len(supporting) < 2 and len(strong) < 1:
+            supporting = [sname for sname, d, _ in votes
+                          if d == direction]
+            if len(supporting) < 2:              # duhen ≥2 strategji bashkë
                 continue
             confidence = min(94.0, 50.0 + abs(score) * 150.0)
             rms_note = ""
@@ -2629,21 +1636,9 @@ class ConsensusAgent(Agent):
                 "supporting": supporting,
                 "n_votes": len(votes),
                 "rms_note": rms_note,
-                "entry": (ctx.tickers.get(sym) or {}).get("price") or 0,
             })
 
         if not candidates:
-            # nëse balancuesi i grid-it ka vendosur një pick, vazhdojmë
-            # me të (nuk ndalemi) — kështu grid-i mbetet i balancuar
-            if getattr(ctx, "picks", []):
-                ctx.chosen = ctx.picks[0]
-                self.report(f"🔀 Pa konsensus — vazhdoj me pick-un e "
-                            f"balancuesit ({ctx.picks[0]['symbol']} "
-                            f"{ctx.picks[0]['direction']})",
-                            ctx.picks[0]["symbol"],
-                            ctx.picks[0]["direction"],
-                            ctx.picks[0]["confidence"])
-                return
             self.report(f"Pa konsensus (pragu adaptiv {threshold:.2f}) — "
                         f"boti pret sinjale më të forta")
             ctx.stop = True
@@ -2651,26 +1646,8 @@ class ConsensusAgent(Agent):
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         best = candidates[0]
-        # 🔀 GRID: pick the best LONG and the best SHORT together, so both
-        # directions can open in the same cycle (grid-style trading).
-        best_long = max((c for c in candidates if c["direction"] == "LONG"),
-                        key=lambda c: c["confidence"], default=None)
-        best_short = max((c for c in candidates if c["direction"] == "SHORT"),
-                         key=lambda c: c["confidence"], default=None)
-        picks = [c for c in (best_long, best_short) if c]
-        picks.sort(key=lambda c: c["confidence"], reverse=True)
-        ctx.chosen = picks[0] if picks else None
-        # ruaj picks ekzistuese të balancuesit + shto ato të konsensusit
-        existing = list(getattr(ctx, "picks", []))
-        seen = {(p["symbol"], p["direction"]) for p in existing}
-        for p in picks:
-            if (p["symbol"], p["direction"]) not in seen:
-                existing.append(p)
-                seen.add((p["symbol"], p["direction"]))
-        ctx.picks = existing
-        ctx.votes_for_trade = (picks[0]["supporting"] if picks
-                               else (existing[0]["supporting"]
-                                     if existing else []))
+        ctx.chosen = best
+        ctx.votes_for_trade = best["supporting"]
         self.report(
             f"{best['symbol']} {best['direction']} — konsensus "
             f"{best['confidence']:.0f}% · {best['n_votes']} strategji "
@@ -2808,14 +1785,6 @@ class ValidatorAgent(Agent):
             ctx.stop = True
             return
 
-        if e.is_risk_paused():
-            mins = int((e.risk_pause_until - time.time()) // 60) + 1
-            self.report(f"🛡️ Risk Manager: push {mins} min — "
-                        f"ndalim nga humbjet (WR {e.risk_state.get('wr')}%)",
-                        best["symbol"], best["direction"], best["confidence"])
-            ctx.stop = True
-            return
-
         if e.mode == "real":
             if not e.exchange.configured:
                 self.report("💰 REAL: çelësat s'janë konfiguruar "
@@ -2846,16 +1815,8 @@ class ValidatorAgent(Agent):
         if klines and len(klines) >= 2:
             closes = [c["c"] for c in klines]
             r = rsi(closes)
-            # RSI ekstrem bllokon vetëm në drejtimin e rrezikshëm:
-            # LONG me RSI shumë të lartë (po përfundon rritja)
-            # SHORT me RSI shumë të ulët (po përfundon rënia)
-            if best["direction"] == "LONG" and r > 88:
-                self.report(f"{best['symbol']}: RSI {r:.0f} — LONG i rrezikshëm",
-                            best["symbol"], best["direction"], best["confidence"])
-                ctx.stop = True
-                return
-            if best["direction"] == "SHORT" and r < 12:
-                self.report(f"{best['symbol']}: RSI {r:.0f} — SHORT i rrezikshëm",
+            if r > 85 or r < 15:
+                self.report(f"{best['symbol']}: RSI ekstrem ({r:.0f}) — i mbingarkuar",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
@@ -2880,19 +1841,9 @@ class ValidatorAgent(Agent):
             return
 
         # 🎯 multi-timeframe confirmation (15m trend must agree)
-        # — but in paper mode, SHORT against an up-trend is allowed (grid
-        #   style) when the balance favours it; it just gets lower conf.
         if MTF_ENABLED:
             ok, m = await self._mtf(e, best["symbol"], best["direction"])
             if not ok:
-                if e.mode == "paper" and best["direction"] == "SHORT":
-                    # grid SHORT: allowed, but reduce confidence
-                    best["confidence"] = max(50, best["confidence"] - 15)
-                    self.report(
-                        f"{best['symbol']}: SHORT kundër trendit (grid) "
-                        f"— konfidenca u ul në {best['confidence']:.0f}%",
-                        best["symbol"], best["direction"], best["confidence"])
-                    return
                 self.report(f"{best['symbol']}: MTF {m}",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
@@ -2945,30 +1896,17 @@ class RiskManagerAgent(Agent):
                         ctx.chosen["confidence"])
             ctx.stop = True
             return
-        # adaptive risk status (protects ×2 against losses)
-        ri = e.risk_info()
-        risk_note = ""
-        if ri.get("paused"):
-            mins = int((e.risk_pause_until - time.time()) // 60) + 1
-            risk_note = f" 🛡️ push {mins} min (WR {ri.get('wr')}%)"
-        elif ri.get("effective_mult", 1.0) < ri.get("user_mult", 1.0):
-            risk_note = (f" 🛡️ mbrojtje: ×{ri.get('user_mult')} → "
-                         f"×{ri.get('effective_mult')} (WR {ri.get('wr')}%)")
-        elif ri.get("effective_mult", 1.0) >= 2:
-            risk_note = " 🛡️ ×2 aktiv — Risk Manager në vëzhgim"
-
         if e.mode == "real":
             bal = e.real_balance()
             notional = ctx.qty * ctx.chosen.get("entry", 0)
             if notional > bal * REAL_MAX_NOTIONAL_PCT:
                 ctx.qty = bal * REAL_MAX_NOTIONAL_PCT / ctx.chosen.get("entry", 1)
             self.report(f"💰 Risk: balanca ${bal:.2f}, ekspozim ≤ "
-                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%{risk_note}",
+                        f"{REAL_MAX_NOTIONAL_PCT*100:.0f}%",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
         else:
-            self.report(f"Risk: ≤{MAX_OPEN} pozicione, drawdown ≤10%, "
-                        f"ekspozim ≤35%{risk_note}",
+            self.report("Risk: ≤4 pozicione, drawdown ≤10%, ekspozim ≤35%",
                         ctx.chosen["symbol"], ctx.chosen["direction"],
                         ctx.chosen["confidence"])
 
@@ -2988,59 +1926,30 @@ class SizerAgent(Agent):
             entry = ctx.tickers.get(sig["symbol"], {}).get("price") or 0
             sig["entry"] = entry
 
-        # stop distance depends on direction (SHORT SL is ABOVE entry)
-        sl = sig.get("sl")
-        if sl is None:
-            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
-                else entry * (1 + STOP_LOSS)
-        stop_dist = abs(entry - sl)
-        sl_pct = stop_dist / entry if entry else STOP_LOSS
-
-        mult = e.effective_mult()                  # ×N normal, ×1 kur risk aktiv
-
-        # 💵 FIXED DOLLAR RISK — entry fixed (e.g. $3), loss never above max
-        # (e.g. $1), regardless of ×1..×5.
-        if e.fixed_risk_enabled:
-            notional = e.fixed_entry_usd
-            if e.mode == "real" and notional < REAL_MIN_NOTIONAL:
-                notional = REAL_MIN_NOTIONAL      # Binance min ~$5
-            qty_entry = notional / entry if entry else 0
-            # safety: qty limited so SL loss never exceeds the cap
-            qty_cap = (e.fixed_max_loss_usd / (entry * sl_pct)) \
-                if (entry and sl_pct > 0) else 0
-            qty = min(qty_entry, qty_cap) if qty_cap > 0 else qty_entry
-            loss_if_sl = qty * entry * sl_pct if entry else 0
-            ctx.qty = qty
-            self.report(
-                f"💵 Fikse: ${notional:.2f} hyrje (pavarësisht ×{mult}) · "
-                f"SL {sl_pct*100:.2f}% → humbje max ${loss_if_sl:.2f} "
-                f"(kufiri ${e.fixed_max_loss_usd:.2f})",
-                sig["symbol"], sig["direction"], sig["confidence"])
-            return
-
         if e.mode == "real":
             bal = e.real_balance()
-            notional = bal * min(REAL_MAX_NOTIONAL_PCT * mult, 0.40)
+            notional = bal * REAL_MAX_NOTIONAL_PCT
             ctx.qty = notional / entry if entry else 0
             self.report(f"💰 REAL {ctx.qty:.6f} @ {entry:.6g} (~${notional:.2f}, "
-                        f"maks {min(REAL_MAX_NOTIONAL_PCT*100*mult,40):.0f}% e balancës, ×{mult:g})",
+                        f"maks {REAL_MAX_NOTIONAL_PCT*100:.0f}% e balancës)",
                         sig["symbol"], sig["direction"], sig["confidence"])
             return
 
         equity = e.account()["equity"]
         base = equity if e.compound else STARTING_BALANCE
         mode = "KOMPONIM" if e.compound else "FIKS"
-        risk_amount = base * TRADE_RISK * mult
+        # stop distance depends on direction (SHORT SL is ABOVE entry)
+        sl = sig.get("sl")
+        if sl is None:
+            sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
+                else entry * (1 + STOP_LOSS)
+        stop_dist = abs(entry - sl)
+        risk_amount = base * TRADE_RISK
         qty = risk_amount / stop_dist if stop_dist > 0 else 0.0
-        # clear progression: ×1=35% ×2=50% ×3=60% ×4=70% ×5=80%
-        # (SL 0.35% mban rrezikun e llogarisë ~0.28% edhe në ×5)
-        pct_map = {1: 0.35, 2: 0.50, 3: 0.60, 4: 0.70, 5: 0.80}
-        max_pct = pct_map.get(int(mult), 0.80)
-        if qty * entry > equity * max_pct:
-            qty = equity * max_pct / entry
+        if qty * entry > equity * 0.35:
+            qty = equity * 0.35 / entry
         ctx.qty = qty
-        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} "
-                    f"({mode}, ×{mult:g}, deri {max_pct*100:.0f}%)",
+        self.report(f"{qty:.4f} @ {entry:.6g} — risk ${risk_amount:.2f} ({mode})",
                     sig["symbol"], sig["direction"], sig["confidence"])
 
 
@@ -3054,57 +1963,43 @@ class FillerAgent(Agent):
     async def execute(self, ctx, idx):
         e = self.engine
         sig = ctx.chosen
-        if not sig:
+        if ctx.qty <= 0:
+            self.report("Madhësi zero — urdhri anulohet",
+                        sig["symbol"], sig["direction"], sig["confidence"])
+            ctx.stop = True
             return
 
         entry = sig.get("entry", 0)
-
-        # 🔀 GRID: open both directions (LONG + SHORT) if slots allow
-        opened = 0
-        for pick in getattr(ctx, "picks", [sig]):
-            # ⚠️ E RËNDËSISHME: çmimi VETËM i simbolit të vet — kurrë
-            # fallback nga pick-i tjetër (kjo shkaktoi çmime të përziera!)
-            pp = pick.get("entry") or \
-                (ctx.tickers.get(pick["symbol"]) or {}).get("price") or 0
-            if not pp or pp <= 0:
-                continue
-            psl = pick.get("sl")
-            if psl is None:
-                psl = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
-                    else pp * (1 + STOP_LOSS)
-            pstop = abs(pp - psl) / pp
-            pqty = 0.0
-            if e.fixed_risk_enabled:
-                ntl = e.fixed_entry_usd
-                pqty = min(ntl / pp,
-                           e.fixed_max_loss_usd / (pp * pstop)) if pstop > 0 else 0
-            else:
-                pqty = (e.account()["equity"] * 0.35 * e.effective_mult()) / pp
-            if pqty <= 0:
-                continue
-            if len(e.open_positions()) >= MAX_OPEN:
-                break
-            ptp = pp * (1 + TAKE_PROFIT) if pick["direction"] == "LONG" \
-                else pp * (1 - TAKE_PROFIT)
-            psl2 = pp * (1 - STOP_LOSS) if pick["direction"] == "LONG" \
-                else pp * (1 + STOP_LOSS)
-            sig2 = dict(pick, entry=pp, tp=ptp, sl=psl2)
-            tid = e._open_trade(sig2, pqty, votes=ctx.votes_for_trade)
-            if tid:
-                opened += 1
-                e._event("fill",
-                         f"{pick['direction']} {pick['symbol']} {pqty:.4f} @ "
-                         f"{pp:.6g} · konsensus {pick['confidence']:.0f}%",
-                         pick["symbol"])
-        if opened:
-            ctx.trade_id = True
-            d = "+".join(f"{p['direction']} {p['symbol'].split('-')[0]}"
-                         for p in ctx.picks[:2])
-            self.report(f"🔀 Grid: hapi {opened} pozicione — {d}",
-                        sig["symbol"], sig["direction"], sig["confidence"])
+        if sig["direction"] == "LONG":
+            sig["tp"] = entry * (1 + TAKE_PROFIT)
+            sig["sl"] = entry * (1 - STOP_LOSS)
         else:
-            self.report("Asnjë pozicion i hapur — pa hapësirë ose madhësi zero",
+            sig["tp"] = entry * (1 - TAKE_PROFIT)
+            sig["sl"] = entry * (1 + STOP_LOSS)
+
+        if e.mode == "real":
+            ctx.trade_id = await e.real_open(sig, ctx.qty)
+            if not ctx.trade_id:
+                self.report(f"💰 REAL: urdhri dështoi për {sig['symbol']}",
+                            sig["symbol"], sig["direction"], sig["confidence"])
+                ctx.stop = True
+                return
+            self.report(f"💰 REAL {sig['direction']} {sig['symbol']} "
+                        f"{ctx.qty:.6f} @ {sig['entry']:.6g} — TP/SL në exchange",
                         sig["symbol"], sig["direction"], sig["confidence"])
+            await asyncio.sleep(1.0)
+            return
+
+        ctx.trade_id = e._open_trade(sig, ctx.qty, votes=ctx.votes_for_trade)
+        self.report(f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
+                    f"{sig['entry']:.6g} — nga {len(ctx.votes_for_trade)} strategji",
+                    sig["symbol"], sig["direction"], sig["confidence"])
+        if ctx.trade_id:
+            e._event("fill",
+                     f"{sig['direction']} {sig['symbol']} {ctx.qty:.4f} @ "
+                     f"{sig['entry']:.6g} · konsensus {sig['confidence']:.0f}% · "
+                     f"{len(ctx.votes_for_trade)} strategji",
+                     sig["symbol"])
         await asyncio.sleep(0.6)
 
 
@@ -3122,24 +2017,6 @@ class TrackerAgent(Agent):
             t = ctx.tickers.get(pos["symbol"])
             price = t["price"] if t and t.get("price", 0) > 0 else pos["entry"]
             side = pos["side"]
-
-            # 🧠 SMART EXIT — mbyll me fitim kur agjentët e shohin të
-            # arsyeshme (trend i mbaruar, RSI ekstrem, momentum i dobësuar).
-            # Nuk ka afat kohor — vendimi bazohet në tregun real.
-            # Fitimi kapet GJITHMONË në dollarë të plotë ($1, $2, $3...),
-            # kurrë me centa (p.sh. JO $1.04).
-            exit_reason = self._smart_exit(e, pos, price, ctx)
-            if exit_reason:
-                if isinstance(exit_reason, tuple):
-                    reason, banked = exit_reason
-                else:
-                    reason, banked = exit_reason, None
-                await e._close_trade(pos, price, reason, banked=banked)
-                continue
-
-            # 📈 trailing — kyç fitimin e arsyeshëm (SL lëviz me çmimin)
-            if e.mode == "paper":
-                self._trail_profit(e, pos, price)
 
             if e.mode == "real":
                 await self._track_real(e, pos, price)
@@ -3181,92 +2058,6 @@ class TrackerAgent(Agent):
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
 
-    def _smart_exit(self, e, pos, price, ctx):
-        """Agjentët e ndalin tregtinë kur fitimi është i ARSYESHËM:
-        • Shkalla në $ TË PLOTË: +$1, +$2, +$3, +$4, +$5 → kapet sa t'ia arrijë
-        • Fitimi matet NETO (pas tarifave) kundrejt shkallës — kurrë centa
-        • RSI ekstrem / trend i kthyer / momentum i mbaruar → kapet (dollar i plotë)
-        Kështu fitimi i arsyeshëm ruhet, jo i lihet rastit.
-        Kthen (arsye, dollar_i_plote) ose None."""
-        side = pos["side"]
-        qty = pos["qty"] or 1
-        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
-            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        if pnl_pct < 0.05:
-            return None
-        # 💵 dollar ladder — MINIMUM $1 neto (asnjëherë nën $1!)
-        # Agjenti mban pozicionin derisa fitimi NETO të arrijë $1, $2, $3+,
-        # pastaj e kap si dollar të plotë — kurrë me centa (p.sh. JO $1.04).
-        pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE   # tarifat hyrje+dalje
-        net_usd = pnl_usd - fees_est
-        if net_usd < 1.0:
-            return None            # mban — fitimi nën $1 nuk kapet kurrë
-        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if net_usd >= rung:
-                return (f"smart: kapur shkalla ${rung:g} — fitim i arsyeshëm", rung)
-        klines = ctx.candles.get(pos["symbol"])
-        if not klines or len(klines) < 30:
-            return None
-        closes = [c["c"] for c in klines]
-        r = rsi(closes)
-        e9 = ema(closes, 9)[-1]
-        e21 = ema(closes, 21)[-1]
-        mom = (closes[-1] - closes[-2]) / closes[-2] * 100 if closes[-2] else 0
-        last2 = (closes[-1] - closes[-2]) + (closes[-2] - closes[-3]) \
-            if len(closes) >= 3 else 0
-
-        # treguesit kapin VETËM me fitim neto >= $1 — gjithmonë dollar i plotë
-        bank = float(int(net_usd))          # p.sh. $1.37 → kapet si $1 (pa centa)
-        if side == "LONG":
-            if r > 68:
-                return ("smart: RSI i mbingarkuar — fitim i arsyeshëm", bank)
-            if e9 < e21:
-                return ("smart: trendi u kthye poshtë — fitim i arsyeshëm", bank)
-            if last2 < 0 and mom < 0:
-                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
-        else:
-            if r < 32:
-                return ("smart: RSI i mbishitur — fitim i arsyeshëm", bank)
-            if e9 > e21:
-                return ("smart: trendi u kthye lart — fitim i arsyeshëm", bank)
-            if last2 > 0 and mom > 0:
-                return ("smart: momentum i dobësuar — fitim i arsyeshëm", bank)
-        return None
-
-    def _trail_profit(self, e, pos, price):
-        """Trailing + shkalla në $: SL lëviz për të kyçur $1/$2/$3/$4/$5
-        sapo arrihen NETO (pas tarifave) — fitimi i arsyeshëm mbrohet gjithmonë,
-        gjithmonë në dollarë të plotë (kurrë centa)."""
-        side = pos["side"]
-        qty = pos["qty"] or 1
-        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100 \
-            if side == "LONG" else (pos["entry"] - price) / pos["entry"] * 100
-        pnl_usd = pos["entry"] * qty * pnl_pct / 100
-        fees_est = (pos["entry"] * qty + price * qty) * FEE_RATE
-        net_usd = pnl_usd - fees_est
-        if net_usd < 1.0:
-            return
-        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë)
-        locked = 0.0
-        for rung in (5.0, 4.0, 3.0, 2.0, 1.0):
-            if net_usd >= rung:
-                locked = rung
-                break
-        # SL që kyç shkallën më të lartë të arritur (min $1, dollar i plotë).
-        # Çmimi i SL llogaritet që fitimi NETO (pas tarifave) = saktësisht
-        # shkalla — kështu edhe kur SL e prek, kapet $1.00 / $2.00, kurrë centa.
-        if side == "LONG":
-            new_sl = (locked + pos["entry"] * qty * (1 + FEE_RATE)) \
-                / (qty * (1 - FEE_RATE))
-            if new_sl > pos["sl"]:
-                e._update_sl(pos["id"], new_sl)
-        else:
-            new_sl = (pos["entry"] * qty * (1 - FEE_RATE) - locked) \
-                / (qty * (1 + FEE_RATE))
-            if new_sl < pos["sl"]:
-                e._update_sl(pos["id"], new_sl)
-
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
@@ -3280,16 +2071,8 @@ class TrackerAgent(Agent):
                 new_sl = pos["entry"] * 0.9995
                 if new_sl < pos["sl"]:
                     e._update_sl(pos["id"], new_sl)
-        if hit_tp:
-            # 💵 edhe TP (rrjet sigurie) kapet si dollar i plotë — kurrë centa
-            pnl_usd = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
-                else (pos["entry"] - price) * pos["qty"]
-            fees = (pos["entry"] + price) * pos["qty"] * FEE_RATE
-            net = pnl_usd - fees
-            banked = float(max(1, int(net))) if net > 0 else None
-            await e._close_trade(pos, price, "tp", banked=banked)
-        elif hit_sl:
-            await e._close_trade(pos, price, "sl")
+        if hit_tp or hit_sl:
+            await e._close_trade(pos, price, "tp" if hit_tp else "sl")
 
     async def _track_real(self, e, pos, price):
         side = pos["side"]
@@ -3310,9 +2093,7 @@ class LearningAgent(Agent):
         e = self.engine
         try:
             with e._conn() as c:
-                explore_min = max(1, int(round(5 / getattr(e, "learn_speed", 1.0))))
-                fresh, max_id = aggregate_from_trades(
-                    c, e.learning_last_id, explore_min=explore_min)
+                fresh, max_id = aggregate_from_trades(c, e.learning_last_id)
             if max_id > e.learning_last_id:
                 e.learning_last_id = max_id
                 for name, st in fresh.items():
@@ -3331,8 +2112,7 @@ class LearningAgent(Agent):
                     "ORDER BY id DESC LIMIT ?", (META_WINDOW,)).fetchall()
             results = [r[0] or 0.0 for r in rows][::-1]
             meta["recent"] = results[-META_WINDOW:]
-            meta["threshold"] = meta_threshold(
-                results, base=getattr(e, "user_threshold", 0.05))
+            meta["threshold"] = meta_threshold(results)
             meta["system_win_rate"] = system_win_rate(results)
         except Exception:
             pass
@@ -3353,11 +2133,8 @@ class LearningAgent(Agent):
             e.learning_history = e.learning_history[-HISTORY_MAX:]
             save_history(e.learning_history)
 
-        # trained = strategies with enough trades (speed scales the bar)
-        speed = getattr(e, "learn_speed", 1.0)
-        trained_bar = max(1, int(round(5 / speed)))   # ×2 speed → 3 tregti
         trained = sum(1 for s in e.strategy_stats.values()
-                      if s.get("trades", 0) >= trained_bar)
+                      if s.get("trades", 0) > 0)
         if trained:
             top = sorted(
                 ((n, s.get("weight", 1.0), s.get("trades", 0))
@@ -3377,10 +2154,9 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
-              [EnsembleVoterAgent, GridBalancerAgent, ConsensusAgent,
-               AIPredictorAgent, RegimeFilterAgent, ValidatorAgent,
-               RiskManagerAgent, SizerAgent, FillerAgent, TrackerAgent,
-               LearningAgent])
+              [ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
+               ValidatorAgent, RiskManagerAgent, SizerAgent,
+               FillerAgent, TrackerAgent, LearningAgent])
 # ============ engine.py ============
 """
 Waynis AI — trading engine (COORDINATOR).
@@ -3412,20 +2188,13 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN,
-                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL,
-                    COMPOUND_MULT_MAX,
-                    RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
-                    RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
-                    RISK_RESUME_MIN,
-                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
-                    ENSEMBLE_ENABLED, AGENT_TARGET)
+                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
-from strategies import generate_variant_strategies
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -3450,19 +2219,6 @@ def clamp(v, lo, hi):
 
 
 def _load_settings():
-    """Load settings: SQLite first (most durable), then JSON fallback."""
-    try:
-        db = sqlite3.connect(DB_PATH)
-        try:
-            row = db.execute("SELECT value FROM settings WHERE key='cfg'").fetchone()
-            if row:
-                return json.loads(row[0])
-        except Exception:
-            pass
-        finally:
-            db.close()
-    except Exception:
-        pass
     try:
         with open(SETTINGS_PATH) as f:
             return json.load(f)
@@ -3471,22 +2227,9 @@ def _load_settings():
 
 
 def _save_settings(s):
-    """Save settings to SQLite (durable on Render) AND JSON (fallback)."""
-    try:
-        db = sqlite3.connect(DB_PATH)
-        db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
-        db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('cfg',?)",
-                   (json.dumps(s),))
-        db.commit()
-        db.close()
-    except Exception:
-        pass
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-        with open(SETTINGS_PATH, "w") as f:
-            json.dump(s, f, indent=2)
-    except Exception:
-        pass
+    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(s, f, indent=2)
 
 
 class PaperEngine:
@@ -3507,23 +2250,6 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
-        self.compound_mult = float(settings.get("compound_mult", 1.0))  # ×1..×2
-        # 🛡️ adaptive risk state (protects against ×2 losses)
-        self.risk_pause_until = 0.0
-        self.risk_state = {"mode": "normal", "mult": self.compound_mult,
-                           "pause_until": 0.0, "last_check": 0.0,
-                           "wr": None, "net": None}
-        # 🧩 ensemble — hundreds of strategy variants vote with the core
-        self.variant_strategies = generate_variant_strategies(
-            AGENT_TARGET) if ENSEMBLE_ENABLED else []
-        self.variant_count = len(self.variant_strategies)
-        self.ensemble_round = 0                 # 🔁 mostër rrotulluese (100k agjentë)
-        # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
-        self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
-                                               FIXED_RISK_ENABLED)
-        self.fixed_entry_usd = settings.get("fixed_entry_usd", FIXED_ENTRY_USD)
-        self.fixed_max_loss_usd = settings.get("fixed_max_loss_usd",
-                                               FIXED_MAX_LOSS_USD)
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -3531,12 +2257,6 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
-        # ⚡ perf caches (make cycles much faster)
-        self.klines_cache = {}                       # (sym,bar) -> (ts, klines)
-        self.ensemble_cache = {}                     # sym -> (ts, votes)
-        # ⚙️ user learning controls
-        self.user_threshold = float(settings.get("user_threshold", 0.05))
-        self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -3568,15 +2288,6 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # DB helpers
     # ------------------------------------------------------------------
-    def get_klines_cached(self, symbol, interval="1m", limit=60, ttl=4.0):
-        """Reuse klines for TTL seconds → no refetch every cycle."""
-        key = (symbol, interval)
-        now = time.time()
-        hit = self.klines_cache.get(key)
-        if hit and now - hit[0] < ttl:
-            return hit[1]
-        return None
-
     def _ensure_db(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with self._conn() as c:
@@ -3623,21 +2334,18 @@ class PaperEngine:
         return sqlite3.connect(DB_PATH)
 
     def _seed_history(self, c):
-        """Seed a fixed paper history so the dashboard feels alive.
+        """Seed a small realistic paper history so the dashboard feels alive.
 
-        🎯 DETERMINISTE: përdor random.Random(20260808) — çdo rindezje
-        prodhon TË NJËJTËT tregti, TË NJËJTËN balancë dhe TË NJËJTIN
-        "Sot" (nuk kërcejnë më numrat 52→32 pas rifreskimit/rihapjes).
-        Tregtitë shpërndahen në 5 orët e fundit që të mos dalin nga
-        dritarja 24-orëshe e pnl_24h gjatë sesionit.
+        ~85% win rate and roughly $50/day on a $10k paper account, spread
+        across the last 24 hours so the daily average looks sane.
         """
-        rng = random.Random(20260808)         # 🔒 fiks — po këto çdo herë
         symbols = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
                    "XRP-USDT", "DOGE-USDT", "ADA-USDT"]
         base_px = {"BTC-USDT": 64000, "ETH-USDT": 3100, "SOL-USDT": 145,
                    "BNB-USDT": 590, "XRP-USDT": 0.55, "DOGE-USDT": 0.07,
                    "ADA-USDT": 0.20}
-        base = time.time() - 5 * 3600         # 5 orët e fundit (të qëndrueshme)
+        base = time.time() - 24 * 3600
+        rng = random.Random(20260808)   # 🔒 fiks — numrat të njëjtë çdo rindezje
         trades = []
         for i in range(14):
             sym = symbols[i % len(symbols)]
@@ -3647,13 +2355,13 @@ class PaperEngine:
             notional = 1200 + rng.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = round(notional * 0.0026 * (0.8 + rng.random() * 0.5))
+                pnl = notional * 0.0026 * (0.8 + rng.random() * 0.5)
                 status = "win"
             else:
-                pnl = -round(notional * 0.0055 * (0.8 + rng.random() * 0.4))
+                pnl = -notional * 0.0055 * (0.8 + rng.random() * 0.4)
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
-            opened = base + i * 1100 + rng.random() * 400
+            opened = base + i * 5700 + rng.random() * 2000
             closed = opened + 180 + rng.random() * 900
             tp_px = entry * (1.0045 if side == "LONG" else 0.9955)
             sl_px = entry * (0.9965 if side == "LONG" else 1.0035)
@@ -3688,151 +2396,14 @@ class PaperEngine:
         pts = []
         n = 36
         span = 24 * 3600
-        rng = random.Random(20260808)         # 🔒 kurba fikse — e njëjtë çdo herë
         for i in range(n + 1):
             frac = i / n
             t = now - (n - i) * (span / n)
             val = STARTING_BALANCE + (end - STARTING_BALANCE) * frac
-            if 0 < i < n:    # pika e parë (24 orë më parë) = saktësisht 10,000
-                val += (rng.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
+            if i < n:
+                val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
-
-    def set_compound_mult(self, mult):
-        self.compound_mult = max(1.0, min(COMPOUND_MULT_MAX, float(mult)))
-        s = _load_settings()
-        s["compound_mult"] = self.compound_mult
-        _save_settings(s)
-        self.risk_state["mult"] = self.compound_mult
-        self._event("settings",
-                    f"💥 Komponimi ×{self.compound_mult:g} — "
-                    f"pozicionet {'dyfishohen' if self.compound_mult >= 2 else 'normale'}")
-        return self.compound_mult
-
-    # ------------------------------------------------------------------
-    # 🛡️ Adaptive risk — protects against ×2 losses
-    # ------------------------------------------------------------------
-    def effective_mult(self):
-        """The multiplier actually used by the Sizer. The risk manager can
-        temporarily reduce ×2 → ×1 when the bot is losing, so losses never
-        actually run at ×2 while we're in a bad patch."""
-        if self.is_risk_paused():
-            return 1.0
-        return self.risk_state.get("mult", self.compound_mult)
-
-    def is_risk_paused(self):
-        return time.time() < self.risk_pause_until
-
-    def risk_info(self):
-        s = self.risk_state
-        return {
-            "adaptive": RISK_ADAPTIVE_ENABLED,
-            "mode": s.get("mode"),
-            "mult": s.get("mult"),
-            "effective_mult": self.effective_mult(),
-            "user_mult": self.compound_mult,
-            "paused": self.is_risk_paused(),
-            "pause_until": s.get("pause_until", 0.0),
-            "wr": s.get("wr"),
-            "net": s.get("net"),
-        }
-
-    def set_learning(self, threshold=None, speed=None):
-        if threshold is not None:
-            self.user_threshold = max(0.03, min(0.12, float(threshold)))
-        if speed is not None:
-            self.learn_speed = max(0.5, min(3.0, float(speed)))
-        s = _load_settings()
-        s["user_threshold"] = self.user_threshold
-        s["learn_speed"] = self.learn_speed
-        _save_settings(s)
-        self._event("settings",
-                    f"🎓 Mësimi: pragu {self.user_threshold:.2f}, "
-                    f"shpejtësia ×{self.learn_speed:g}")
-        return self.learning_controls()
-
-    def learning_controls(self):
-        return {"threshold": self.user_threshold, "speed": self.learn_speed}
-
-    def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
-        if enabled is not None:
-            self.fixed_risk_enabled = bool(enabled)
-        if entry is not None:
-            self.fixed_entry_usd = max(1.0, float(entry))
-        if max_loss is not None:
-            self.fixed_max_loss_usd = max(0.25, float(max_loss))
-        s = _load_settings()
-        s.update({"fixed_risk_enabled": self.fixed_risk_enabled,
-                  "fixed_entry_usd": self.fixed_entry_usd,
-                  "fixed_max_loss_usd": self.fixed_max_loss_usd})
-        _save_settings(s)
-        self._event("settings",
-                    f"💵 Rrezik fiks: {'ON' if self.fixed_risk_enabled else 'OFF'} — "
-                    f"hyrje ${self.fixed_entry_usd:.2f}, humbje max "
-                    f"${self.fixed_max_loss_usd:.2f} (pavarësisht ×N)")
-        return self.fixed_risk_info()
-
-    def fixed_risk_info(self):
-        return {"enabled": self.fixed_risk_enabled,
-                "entry_usd": self.fixed_entry_usd,
-                "max_loss_usd": self.fixed_max_loss_usd}
-
-    def recent_closed(self, n=RISK_LOOKBACK):
-        with self._conn() as c:
-            rows = c.execute(
-                "SELECT pnl, status FROM trades WHERE status!='open' "
-                "ORDER BY id DESC LIMIT ?", (n,)).fetchall()
-        return [(p or 0.0, st) for p, st in rows][::-1]
-
-    def risk_manager_tick(self):
-        """Called each cycle: evaluate recent performance and adjust risk.
-        Returns True if trading should be paused (new entries blocked)."""
-        if not RISK_ADAPTIVE_ENABLED:
-            return False
-        now = time.time()
-        # cooldown between checks
-        if now - self.risk_state.get("last_check", 0) < RISK_RESUME_MIN * 60:
-            return self.is_risk_paused()
-
-        recent = self.recent_closed()
-        if len(recent) < 4:
-            return False
-        wins = sum(1 for _, st in recent if st == "win")
-        wr = wins / len(recent)
-        net = sum(p for p, _ in recent)
-        self.risk_state["wr"] = round(wr * 100, 1)
-        self.risk_state["net"] = round(net, 2)
-        self.risk_state["last_check"] = now
-
-        # losing → de-risk (reduce ×2 to ×1) and/or pause
-        if wr < RISK_BAD_WR or net < RISK_BAD_NET:
-            if self.compound_mult >= 2:
-                self.risk_state["mult"] = RISK_DELEVERAGE_TO
-                self.risk_state["mode"] = "de-risk"
-                self._event(
-                    "risk",
-                    f"🛡️ Risk Manager: humbje në {len(recent)} tregtitë e fundit "
-                    f"(WR {wr*100:.0f}%, net ${net:+.2f}) → komponimi u ul "
-                    f"në ×{RISK_DELEVERAGE_TO:g} për t'u mbrojtur")
-            self.risk_pause_until = now + RISK_PAUSE_MIN * 60
-            self.risk_state["pause_until"] = self.risk_pause_until
-            self.risk_state["mode"] = "pause"
-            self._event(
-                "risk",
-                f"🛡️ Risk Manager: push {RISK_PAUSE_MIN} min — ndal tregtitë e reja "
-                f"derisa tregu të stabilizohet (WR {wr*100:.0f}%, net ${net:+.2f})")
-            return True
-
-        # performing well → restore the user's multiplier
-        if self.risk_state.get("mult", 1.0) < self.compound_mult:
-            self.risk_state["mult"] = self.compound_mult
-            self.risk_state["mode"] = "normal"
-            self._event("risk",
-                        f"🛡️ Risk Manager: performancë e mirë (WR {wr*100:.0f}%) "
-                        f"→ komponimi u kthye në ×{self.compound_mult:g}")
-        else:
-            self.risk_state["mode"] = "normal"
-        return False
 
     # ------------------------------------------------------------------
     # 🔒 Equity profit lock
@@ -4248,11 +2819,6 @@ class PaperEngine:
             await self.dca_check()
         except Exception:
             pass
-        # 🛡️ adaptive risk check (protect against ×2 losses)
-        try:
-            self.risk_manager_tick()
-        except Exception:
-            pass
         ctx = CycleContext(self, self.market, idx)
         for agent in self.agents:
             if ctx.stop:
@@ -4294,16 +2860,11 @@ class PaperEngine:
         with self._conn() as c:
             c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
 
-    async def _close_trade(self, pos, price, reason, banked=None):
+    async def _close_trade(self, pos, price, reason):
         """Close a PAPER position (with real fees simulated).
         If TP1 already banked half the profit, the trade's total PnL shown
         in the ledger = runner PnL + partial PnL (balance credits only the
-        runner part — the partial was already credited at TP1).
-
-        💵 `banked` = dollarë të plotë ($1, $2, $3...) që agjenti kyçi —
-        fitimi regjistrohet si dollar i plotë, KURRË me centa (p.sh. JO $1.04).
-        `min(pnl, banked)` garanton që kurrë nuk regjistrohet më shumë se
-        fitimi real (neto) i pozicionit."""
+        runner part — the partial was already credited at TP1)."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -4311,8 +2872,6 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
-        if banked is not None:
-            pnl = round(min(pnl, banked), 2)     # 💵 dollar i plotë, kurrë centa
         partial = pos.get("partial_pnl") or 0.0
         total_pnl = pnl + partial
         status = "win" if total_pnl > 0 else "loss"
@@ -4325,25 +2884,12 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
-        if reason.startswith("smart:"):
-            label = "Smart"
-        elif reason == "tp":
-            label = "TP"
-        elif reason == "sl":
-            label = "SL"
-        else:
-            label = "exit"
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
-                    f"USDT (tarifa ${fees:.2f})",
+                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
+                    f"(tarifa ${fees:.2f})",
                     pos["symbol"])
-
-    @staticmethod
-    def _fmt_usd(x):
-        """Formaton dollarët: $1 → '1', $1.37 → '1.37' (fitimet e kyçura
-        janë gjithmonë dollarë të plotë, kështu dalin pa centa)."""
-        return f"{x:g}" if abs(x - round(x)) < 1e-9 else f"{x:.2f}"
 
     # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)
@@ -4754,14 +3300,10 @@ async def status():
         "cycle_seconds": CYCLE_SECONDS,
         "auto_trade": engine.auto_trade,
         "compound": engine.compound,
-        "compound_mult": engine.compound_mult,
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
         "lock": engine.lock_info(),
-        "risk": engine.risk_info(),
-        "fixed_risk": engine.fixed_risk_info(),
-        "learning_ctrl": engine.learning_controls(),
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
@@ -4770,10 +3312,6 @@ async def status():
             "watchlist_size": len(WATCHLIST),
             "scanned_per_cycle": SCAN_BATCH,
         },
-        "ensemble": {"enabled": engine.variant_count > 0,
-                     "variants": engine.variant_count,
-                     "core_strategies": 16,
-                     "total_strategies": engine.variant_count + 16},
         "agents": engine.agents_info(),
         "ai": engine.brain.status(),
         "ai_last": engine.last_ai,
@@ -4858,20 +3396,6 @@ async def set_settings(body: dict):
         return {"ok": True, "mode": new_mode,
                 "auto_trade": engine.auto_trade,
                 "compound": engine.compound}
-    if "compound_mult" in body:
-        mult = engine.set_compound_mult(body["compound_mult"])
-        return {"ok": True, "compound_mult": mult}
-    if "threshold" in body or "learn_speed" in body:
-        info = engine.set_learning(threshold=body.get("threshold"),
-                                   speed=body.get("learn_speed"))
-        return {"ok": True, "learning_ctrl": info}
-    if any(k in body for k in ("fixed_risk_enabled", "fixed_entry_usd",
-                               "fixed_max_loss_usd")):
-        info = engine.set_fixed_risk(
-            enabled=body.get("fixed_risk_enabled"),
-            entry=body.get("fixed_entry_usd"),
-            max_loss=body.get("fixed_max_loss_usd"))
-        return {"ok": True, "fixed_risk": info}
     if "equity_lock_enabled" in body or "equity_lock_pct" in body:
         info = engine.set_equity_lock(
             enabled=body.get("equity_lock_enabled"),
@@ -4879,94 +3403,6 @@ async def set_settings(body: dict):
         return {"ok": True, "lock": info}
     return {"ok": True, "auto_trade": engine.auto_trade,
             "compound": engine.compound, "mode": engine.mode}
-
-
-@app.post("/api/webhook/tradingview")
-async def tradingview_webhook(body: dict = None):
-    """Receives TradingView alerts (webhook) and turns them into trades.
-
-    In TradingView (Premium) create an Alert → Webhook URL →
-    paste this endpoint URL, and set the message (JSON):
-      {"symbol":"BTCUSDT","side":"buy","price":0}
-    side: buy/sell  (or long/short)
-    """
-    if body is None:
-        body = {}
-    symbol = str(body.get("symbol") or body.get("ticker") or "").upper()
-    side = str(body.get("side") or body.get("action") or body.get("direction") or "").lower()
-    price = float(body.get("price") or 0) or None
-
-    # normalize symbol: BTCUSDT -> BTC-USDT
-    if symbol and "-" not in symbol and symbol.endswith("USDT"):
-        symbol = symbol[:-4] + "-USDT"
-    # validate symbol is in watchlist
-    ok_syms = {w[0] for w in WATCHLIST}
-    if symbol not in ok_syms:
-        return {"ok": False, "error": f"Simboli '{symbol}' nuk është në watchlist"}
-
-    direction = None
-    if side in ("buy", "long", "l"):
-        direction = "LONG"
-    elif side in ("sell", "short", "s"):
-        direction = "SHORT"
-    else:
-        return {"ok": False, "error": f"Drejtimi '{side}' i panjohur (përdor buy/sell)"}
-
-    # build a signal and execute through the same engine path
-    import engine as eng
-    sig = {"symbol": symbol, "direction": direction,
-           "entry": price or (engine.last_tickers.get(symbol) or {}).get("price") or 0,
-           "confidence": 80.0}
-    # attach TP/SL (LONG: SL below; SHORT: SL above)
-    if direction == "LONG":
-        sig["tp"] = sig["entry"] * 1.0045
-        sig["sl"] = sig["entry"] * 0.9965
-    else:
-        sig["tp"] = sig["entry"] * 0.9955
-        sig["sl"] = sig["entry"] * 1.0035
-    if not sig["entry"]:
-        tickers = await market.fetch_all_tickers()
-        engine.last_tickers = tickers
-        sig["entry"] = (tickers.get(symbol) or {}).get("price") or 0
-    if not sig["entry"]:
-        return {"ok": False, "error": "Nuk u gjet çmimi"}
-
-    qty = 0.0
-    if engine.fixed_risk_enabled:
-        notional = engine.fixed_entry_usd
-        sl_pct = 0.0035
-        qty = min(notional / sig["entry"],
-                  engine.fixed_max_loss_usd / (sig["entry"] * sl_pct))
-    else:
-        qty = (engine.account()["equity"] * 0.35) / sig["entry"]
-
-    if qty <= 0:
-        return {"ok": False, "error": "Madhësi zero"}
-
-    if engine.mode == "real" and engine.exchange.configured:
-        tid = await engine.real_open(sig, qty)
-    else:
-        tid = engine._open_trade(sig, qty, votes=["TradingView"])
-        if tid:
-            engine._event("tv",
-                          f"📡 TradingView: {direction} {symbol} "
-                          f"{qty:.6f} @ {sig['entry']:.6g}",
-                          symbol)
-
-    engine._event("settings",
-                  f"📡 TradingView sinjal: {direction} {symbol}")
-    return {"ok": True, "trade_id": tid, "symbol": symbol,
-            "direction": direction, "qty": round(qty, 6),
-            "entry": sig["entry"], "mode": engine.mode}
-
-
-@app.get("/api/webhook/info")
-async def webhook_info():
-    """Instructions + the webhook URL to paste into TradingView."""
-    return {"ok": True,
-            "webhook_url": f"https://waynis-ai-1.onrender.com/api/webhook/tradingview",
-            "example": '{"symbol":"BTCUSDT","side":"buy"}',
-            "note": "Vendos URL-në te TradingView → Alert → Webhook URL"}
 
 
 @app.get("/api/learning")

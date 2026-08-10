@@ -28,20 +28,13 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     TRAIL_PCT, RUNNER_BE,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN,
-                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL,
-                    COMPOUND_MULT_MAX,
-                    RISK_ADAPTIVE_ENABLED, RISK_LOOKBACK, RISK_BAD_WR,
-                    RISK_BAD_NET, RISK_DELEVERAGE_TO, RISK_PAUSE_MIN,
-                    RISK_RESUME_MIN,
-                    FIXED_RISK_ENABLED, FIXED_ENTRY_USD, FIXED_MAX_LOSS_USD,
-                    ENSEMBLE_ENABLED, AGENT_TARGET)
+                    DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
                     load_weights, save_weights, DEFAULT_STATS)
 from brain import AIBrain
 from exchange import get_exchange, to_exchange_symbol
 from learning import load_history, enrich
-from strategies import generate_variant_strategies
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "paper.db")
@@ -66,19 +59,6 @@ def clamp(v, lo, hi):
 
 
 def _load_settings():
-    """Load settings: SQLite first (most durable), then JSON fallback."""
-    try:
-        db = sqlite3.connect(DB_PATH)
-        try:
-            row = db.execute("SELECT value FROM settings WHERE key='cfg'").fetchone()
-            if row:
-                return json.loads(row[0])
-        except Exception:
-            pass
-        finally:
-            db.close()
-    except Exception:
-        pass
     try:
         with open(SETTINGS_PATH) as f:
             return json.load(f)
@@ -87,22 +67,9 @@ def _load_settings():
 
 
 def _save_settings(s):
-    """Save settings to SQLite (durable on Render) AND JSON (fallback)."""
-    try:
-        db = sqlite3.connect(DB_PATH)
-        db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
-        db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('cfg',?)",
-                   (json.dumps(s),))
-        db.commit()
-        db.close()
-    except Exception:
-        pass
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-        with open(SETTINGS_PATH, "w") as f:
-            json.dump(s, f, indent=2)
-    except Exception:
-        pass
+    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+    with open(SETTINGS_PATH, "w") as f:
+        json.dump(s, f, indent=2)
 
 
 class PaperEngine:
@@ -123,23 +90,6 @@ class PaperEngine:
         self.equity_lock_enabled = settings.get("equity_lock_enabled",
                                                 EQUITY_LOCK_ENABLED)
         self.equity_lock_pct = settings.get("equity_lock_pct", EQUITY_LOCK_PCT)
-        self.compound_mult = float(settings.get("compound_mult", 1.0))  # ×1..×2
-        # 🛡️ adaptive risk state (protects against ×2 losses)
-        self.risk_pause_until = 0.0
-        self.risk_state = {"mode": "normal", "mult": self.compound_mult,
-                           "pause_until": 0.0, "last_check": 0.0,
-                           "wr": None, "net": None}
-        # 🧩 ensemble — hundreds of strategy variants vote with the core
-        self.variant_strategies = generate_variant_strategies(
-            AGENT_TARGET) if ENSEMBLE_ENABLED else []
-        self.variant_count = len(self.variant_strategies)
-        self.ensemble_round = 0                 # 🔁 mostër rrotulluese (100k agjentë)
-        # 💵 fixed dollar risk (entry fixed, max loss fixed, ignores ×N)
-        self.fixed_risk_enabled = settings.get("fixed_risk_enabled",
-                                               FIXED_RISK_ENABLED)
-        self.fixed_entry_usd = settings.get("fixed_entry_usd", FIXED_ENTRY_USD)
-        self.fixed_max_loss_usd = settings.get("fixed_max_loss_usd",
-                                               FIXED_MAX_LOSS_USD)
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -147,12 +97,6 @@ class PaperEngine:
         self.dca_symbol = settings.get("dca_symbol", DCA_SYMBOL)
         # 🎯 multi-timeframe cache
         self.mtf_cache = {}                          # symbol -> (ts, closes)
-        # ⚡ perf caches (make cycles much faster)
-        self.klines_cache = {}                       # (sym,bar) -> (ts, klines)
-        self.ensemble_cache = {}                     # sym -> (ts, votes)
-        # ⚙️ user learning controls
-        self.user_threshold = float(settings.get("user_threshold", 0.05))
-        self.learn_speed = float(settings.get("learn_speed", 1.0))  # 0.5 slow..2 fast
         self.strategy_stats = load_weights()        # 🎓 learned weights
         self.learning_last_id = int(self.strategy_stats.pop("__last_trade_id", 0) or 0)
         self.meta_state = {"recent": [], "threshold": 0.05,
@@ -184,15 +128,6 @@ class PaperEngine:
     # ------------------------------------------------------------------
     # DB helpers
     # ------------------------------------------------------------------
-    def get_klines_cached(self, symbol, interval="1m", limit=60, ttl=4.0):
-        """Reuse klines for TTL seconds → no refetch every cycle."""
-        key = (symbol, interval)
-        now = time.time()
-        hit = self.klines_cache.get(key)
-        if hit and now - hit[0] < ttl:
-            return hit[1]
-        return None
-
     def _ensure_db(self):
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with self._conn() as c:
@@ -239,21 +174,18 @@ class PaperEngine:
         return sqlite3.connect(DB_PATH)
 
     def _seed_history(self, c):
-        """Seed a fixed paper history so the dashboard feels alive.
+        """Seed a small realistic paper history so the dashboard feels alive.
 
-        🎯 DETERMINISTE: përdor random.Random(20260808) — çdo rindezje
-        prodhon TË NJËJTËT tregti, TË NJËJTËN balancë dhe TË NJËJTIN
-        "Sot" (nuk kërcejnë më numrat 52→32 pas rifreskimit/rihapjes).
-        Tregtitë shpërndahen në 5 orët e fundit që të mos dalin nga
-        dritarja 24-orëshe e pnl_24h gjatë sesionit.
+        ~85% win rate and roughly $50/day on a $10k paper account, spread
+        across the last 24 hours so the daily average looks sane.
         """
-        rng = random.Random(20260808)         # 🔒 fiks — po këto çdo herë
         symbols = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
                    "XRP-USDT", "DOGE-USDT", "ADA-USDT"]
         base_px = {"BTC-USDT": 64000, "ETH-USDT": 3100, "SOL-USDT": 145,
                    "BNB-USDT": 590, "XRP-USDT": 0.55, "DOGE-USDT": 0.07,
                    "ADA-USDT": 0.20}
-        base = time.time() - 5 * 3600         # 5 orët e fundit (të qëndrueshme)
+        base = time.time() - 24 * 3600
+        rng = random.Random(20260808)   # 🔒 fiks — numrat të njëjtë çdo rindezje
         trades = []
         for i in range(14):
             sym = symbols[i % len(symbols)]
@@ -263,13 +195,13 @@ class PaperEngine:
             notional = 1200 + rng.random() * 1800   # $1.2k–$3k pozicion
             qty = notional / entry
             if win:
-                pnl = round(notional * 0.0026 * (0.8 + rng.random() * 0.5))
+                pnl = notional * 0.0026 * (0.8 + rng.random() * 0.5)
                 status = "win"
             else:
-                pnl = -round(notional * 0.0055 * (0.8 + rng.random() * 0.4))
+                pnl = -notional * 0.0055 * (0.8 + rng.random() * 0.4)
                 status = "loss"
             exit_px = entry + (pnl / qty) if side == "LONG" else entry - (pnl / qty)
-            opened = base + i * 1100 + rng.random() * 400
+            opened = base + i * 5700 + rng.random() * 2000
             closed = opened + 180 + rng.random() * 900
             tp_px = entry * (1.0045 if side == "LONG" else 0.9955)
             sl_px = entry * (0.9965 if side == "LONG" else 1.0035)
@@ -304,151 +236,14 @@ class PaperEngine:
         pts = []
         n = 36
         span = 24 * 3600
-        rng = random.Random(20260808)         # 🔒 kurba fikse — e njëjtë çdo herë
         for i in range(n + 1):
             frac = i / n
             t = now - (n - i) * (span / n)
             val = STARTING_BALANCE + (end - STARTING_BALANCE) * frac
-            if 0 < i < n:    # pika e parë (24 orë më parë) = saktësisht 10,000
-                val += (rng.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
+            if i < n:
+                val += (random.random() - 0.5) * max(8.0, abs(end - STARTING_BALANCE) * 0.03)
             pts.append((t, round(val, 2)))
         self.equity_history = pts
-
-    def set_compound_mult(self, mult):
-        self.compound_mult = max(1.0, min(COMPOUND_MULT_MAX, float(mult)))
-        s = _load_settings()
-        s["compound_mult"] = self.compound_mult
-        _save_settings(s)
-        self.risk_state["mult"] = self.compound_mult
-        self._event("settings",
-                    f"💥 Komponimi ×{self.compound_mult:g} — "
-                    f"pozicionet {'dyfishohen' if self.compound_mult >= 2 else 'normale'}")
-        return self.compound_mult
-
-    # ------------------------------------------------------------------
-    # 🛡️ Adaptive risk — protects against ×2 losses
-    # ------------------------------------------------------------------
-    def effective_mult(self):
-        """The multiplier actually used by the Sizer. The risk manager can
-        temporarily reduce ×2 → ×1 when the bot is losing, so losses never
-        actually run at ×2 while we're in a bad patch."""
-        if self.is_risk_paused():
-            return 1.0
-        return self.risk_state.get("mult", self.compound_mult)
-
-    def is_risk_paused(self):
-        return time.time() < self.risk_pause_until
-
-    def risk_info(self):
-        s = self.risk_state
-        return {
-            "adaptive": RISK_ADAPTIVE_ENABLED,
-            "mode": s.get("mode"),
-            "mult": s.get("mult"),
-            "effective_mult": self.effective_mult(),
-            "user_mult": self.compound_mult,
-            "paused": self.is_risk_paused(),
-            "pause_until": s.get("pause_until", 0.0),
-            "wr": s.get("wr"),
-            "net": s.get("net"),
-        }
-
-    def set_learning(self, threshold=None, speed=None):
-        if threshold is not None:
-            self.user_threshold = max(0.03, min(0.12, float(threshold)))
-        if speed is not None:
-            self.learn_speed = max(0.5, min(3.0, float(speed)))
-        s = _load_settings()
-        s["user_threshold"] = self.user_threshold
-        s["learn_speed"] = self.learn_speed
-        _save_settings(s)
-        self._event("settings",
-                    f"🎓 Mësimi: pragu {self.user_threshold:.2f}, "
-                    f"shpejtësia ×{self.learn_speed:g}")
-        return self.learning_controls()
-
-    def learning_controls(self):
-        return {"threshold": self.user_threshold, "speed": self.learn_speed}
-
-    def set_fixed_risk(self, enabled=None, entry=None, max_loss=None):
-        if enabled is not None:
-            self.fixed_risk_enabled = bool(enabled)
-        if entry is not None:
-            self.fixed_entry_usd = max(1.0, float(entry))
-        if max_loss is not None:
-            self.fixed_max_loss_usd = max(0.25, float(max_loss))
-        s = _load_settings()
-        s.update({"fixed_risk_enabled": self.fixed_risk_enabled,
-                  "fixed_entry_usd": self.fixed_entry_usd,
-                  "fixed_max_loss_usd": self.fixed_max_loss_usd})
-        _save_settings(s)
-        self._event("settings",
-                    f"💵 Rrezik fiks: {'ON' if self.fixed_risk_enabled else 'OFF'} — "
-                    f"hyrje ${self.fixed_entry_usd:.2f}, humbje max "
-                    f"${self.fixed_max_loss_usd:.2f} (pavarësisht ×N)")
-        return self.fixed_risk_info()
-
-    def fixed_risk_info(self):
-        return {"enabled": self.fixed_risk_enabled,
-                "entry_usd": self.fixed_entry_usd,
-                "max_loss_usd": self.fixed_max_loss_usd}
-
-    def recent_closed(self, n=RISK_LOOKBACK):
-        with self._conn() as c:
-            rows = c.execute(
-                "SELECT pnl, status FROM trades WHERE status!='open' "
-                "ORDER BY id DESC LIMIT ?", (n,)).fetchall()
-        return [(p or 0.0, st) for p, st in rows][::-1]
-
-    def risk_manager_tick(self):
-        """Called each cycle: evaluate recent performance and adjust risk.
-        Returns True if trading should be paused (new entries blocked)."""
-        if not RISK_ADAPTIVE_ENABLED:
-            return False
-        now = time.time()
-        # cooldown between checks
-        if now - self.risk_state.get("last_check", 0) < RISK_RESUME_MIN * 60:
-            return self.is_risk_paused()
-
-        recent = self.recent_closed()
-        if len(recent) < 4:
-            return False
-        wins = sum(1 for _, st in recent if st == "win")
-        wr = wins / len(recent)
-        net = sum(p for p, _ in recent)
-        self.risk_state["wr"] = round(wr * 100, 1)
-        self.risk_state["net"] = round(net, 2)
-        self.risk_state["last_check"] = now
-
-        # losing → de-risk (reduce ×2 to ×1) and/or pause
-        if wr < RISK_BAD_WR or net < RISK_BAD_NET:
-            if self.compound_mult >= 2:
-                self.risk_state["mult"] = RISK_DELEVERAGE_TO
-                self.risk_state["mode"] = "de-risk"
-                self._event(
-                    "risk",
-                    f"🛡️ Risk Manager: humbje në {len(recent)} tregtitë e fundit "
-                    f"(WR {wr*100:.0f}%, net ${net:+.2f}) → komponimi u ul "
-                    f"në ×{RISK_DELEVERAGE_TO:g} për t'u mbrojtur")
-            self.risk_pause_until = now + RISK_PAUSE_MIN * 60
-            self.risk_state["pause_until"] = self.risk_pause_until
-            self.risk_state["mode"] = "pause"
-            self._event(
-                "risk",
-                f"🛡️ Risk Manager: push {RISK_PAUSE_MIN} min — ndal tregtitë e reja "
-                f"derisa tregu të stabilizohet (WR {wr*100:.0f}%, net ${net:+.2f})")
-            return True
-
-        # performing well → restore the user's multiplier
-        if self.risk_state.get("mult", 1.0) < self.compound_mult:
-            self.risk_state["mult"] = self.compound_mult
-            self.risk_state["mode"] = "normal"
-            self._event("risk",
-                        f"🛡️ Risk Manager: performancë e mirë (WR {wr*100:.0f}%) "
-                        f"→ komponimi u kthye në ×{self.compound_mult:g}")
-        else:
-            self.risk_state["mode"] = "normal"
-        return False
 
     # ------------------------------------------------------------------
     # 🔒 Equity profit lock
@@ -864,11 +659,6 @@ class PaperEngine:
             await self.dca_check()
         except Exception:
             pass
-        # 🛡️ adaptive risk check (protect against ×2 losses)
-        try:
-            self.risk_manager_tick()
-        except Exception:
-            pass
         ctx = CycleContext(self, self.market, idx)
         for agent in self.agents:
             if ctx.stop:
@@ -910,16 +700,11 @@ class PaperEngine:
         with self._conn() as c:
             c.execute("UPDATE trades SET trail_high=? WHERE id=?", (peak, trade_id))
 
-    async def _close_trade(self, pos, price, reason, banked=None):
+    async def _close_trade(self, pos, price, reason):
         """Close a PAPER position (with real fees simulated).
         If TP1 already banked half the profit, the trade's total PnL shown
         in the ledger = runner PnL + partial PnL (balance credits only the
-        runner part — the partial was already credited at TP1).
-
-        💵 `banked` = dollarë të plotë ($1, $2, $3...) që agjenti kyçi —
-        fitimi regjistrohet si dollar i plotë, KURRË me centa (p.sh. JO $1.04).
-        `min(pnl, banked)` garanton që kurrë nuk regjistrohet më shumë se
-        fitimi real (neto) i pozicionit."""
+        runner part — the partial was already credited at TP1)."""
         qty = pos["qty"]
         if pos["side"] == "LONG":
             gross = (price - pos["entry"]) * qty
@@ -927,8 +712,6 @@ class PaperEngine:
             gross = (pos["entry"] - price) * qty
         fees = (pos["entry"] * qty + price * qty) * FEE_RATE
         pnl = gross - fees
-        if banked is not None:
-            pnl = round(min(pnl, banked), 2)     # 💵 dollar i plotë, kurrë centa
         partial = pos.get("partial_pnl") or 0.0
         total_pnl = pnl + partial
         status = "win" if total_pnl > 0 else "loss"
@@ -941,25 +724,12 @@ class PaperEngine:
                 "UPDATE account SET balance=balance+?, peak=MAX(peak,balance+?) "
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
-        if reason.startswith("smart:"):
-            label = "Smart"
-        elif reason == "tp":
-            label = "TP"
-        elif reason == "sl":
-            label = "SL"
-        else:
-            label = "exit"
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
-                    f"{'+' if total_pnl >= 0 else ''}{self._fmt_usd(total_pnl)} "
-                    f"USDT (tarifa ${fees:.2f})",
+                    f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
+                    f"(tarifa ${fees:.2f})",
                     pos["symbol"])
-
-    @staticmethod
-    def _fmt_usd(x):
-        """Formaton dollarët: $1 → '1', $1.37 → '1.37' (fitimet e kyçura
-        janë gjithmonë dollarë të plotë, kështu dalin pa centa)."""
-        return f"{x:g}" if abs(x - round(x)) < 1e-9 else f"{x:.2f}"
 
     # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)

@@ -97,31 +97,6 @@ mbetet $75. **Faktori i komponimit** (equity ÷ 10,000) shfaqet te Cilësimet
 dhe **kurba e equity** (grafik 24-orësh me zonë jeshile) është te tab-i
 "Tregti" — aty e sheh efektin komponues me sytë e tu.
 
-## 🧩 100,000 agjentë që bashkëpunojnë
-
-- **28 agjentë bërthamë** (16 strategji + Ensemble, Grid, Consensus, AI,
-  Validator, Risk, Sizer, Filler, Tracker, Learning…) + **100,000 variante
-  strategjike unike** (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI,
-  SMA, TRIX, DUALMOM, BTREND, EMARSI…) = **100,028 agjentë gjithsej**.
-- **Mostër rrotulluese:** në çdo cikël votojnë 1,500 agjentë nga 100,000
-  (rreth 27 ms) — me kalimin e kohës TË GJITHË 100,000 marrin pjesë
-  njësoj shpesh, pa e ngadalësuar botin.
-- Bashkëpunimi: votat grupohen në **familje strategjish** dhe **çdo familje
-  ka një zë të barabartë** — asnjë familje nuk e dominon vendimin; familjet
-  bien dakord së bashku (konsensus i peshuar).
-- Agjenti **Learning** mëson nga çdo tregti në nivel familjeje dhe i
-  rregullon peshat e familjeve që bashkëpunuan për fitimin.
-
-## 💵 Fitimi kapet vetëm në dollarë të plotë
-
-- **Korniza: 5 minuta** (e fiksuar — nuk ndryshohet).
-- **Hyrja: $15** për tregti, **humbja maksimale: $2**.
-- Agjenti **mban pozicionin derisa fitimi të arrijë $1** — asnjëherë nuk kapet
-  fitim nën $1 dhe **asnjëherë me centa** (p.sh. JO $1.04).
-- Fitimi matet **neto (pas tarifave)** dhe kapet në **shkallët $1 → $2 → $3 →
-  $4 → $5**: kur tregu arrin shkallën, ajo kyçet si dollar i plotë.
-- Edhe TP (35%, rrjet sigurie) dhe historiku demo përdorin dollarë të plotë.
-
 ---
 
 ## 🚀 Si ta hapësh në Android
@@ -212,4 +187,3 @@ Ky është **demo edukative** me tregti të simuluara (paper). Çmimet janë rea
 por asnjë para nuk investohet apo rrezikohet. Tregtimi i kriptomonedhave në
 tregjet reale mbart rrezik të lartë — mos investo para që s'mund t'i humbësh.
 Historiku i tregtive në fillim është **seed demo** (mund të fshihet me Reset).
-

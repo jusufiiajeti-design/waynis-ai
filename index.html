@@ -53,16 +53,6 @@
     border-radius:99px;font-size:11px;font-weight:700}
   .dot{width:7px;height:7px;border-radius:50%;background:var(--green);
     animation:pulse 1.4s infinite}
-  /* live ticker tape */
-  .tape-wrap{overflow:hidden;border-bottom:1px solid var(--line);
-    background:rgba(13,18,28,.6);height:26px;display:flex;align-items:center}
-  .tape{display:flex;gap:22px;white-space:nowrap;padding-left:100%;
-    animation:tapeMove 28s linear infinite;font-size:11px;color:var(--mut)}
-  .tape:hover{animation-play-state:paused}
-  .tape .tk{display:inline-flex;align-items:center;gap:5px}
-  .tape .tk b{color:var(--txt);font-weight:700}
-  .tape .tk .up{color:var(--green)} .tape .tk .dn{color:var(--red)}
-  @keyframes tapeMove{from{transform:translateX(0)}to{transform:translateX(-100%)}}
   @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.5)}
     50%{opacity:.6;box-shadow:0 0 0 5px rgba(34,197,94,0)}}
 
@@ -133,7 +123,6 @@
   @keyframes stepPulse{0%,100%{box-shadow:0 0 12px rgba(34,197,94,.2)}
     50%{box-shadow:0 0 22px rgba(34,197,94,.45)}}
   .pipe-msg{font-size:12.5px;color:var(--mut);line-height:1.5;min-height:38px}
-  .hero-legend{font-size:10.5px;color:var(--mut);margin-top:4px}
   .agents-line{font-size:11px;color:var(--dim);background:rgba(167,139,250,.08);
     border:1px dashed rgba(167,139,250,.35);border-radius:10px;padding:8px 10px;
     margin:-2px 0 10px;line-height:1.6}
@@ -293,10 +282,6 @@
     color:#fca5a5;font-size:11.5px;font-weight:600;text-align:center">
     💰 MODALITET REAL — PO TREGTON ME PARA TË VËRTETA (spot, vetëm LONG)
   </div>
-  <!-- live ticker tape — moves non-stop -->
-  <div class="tape-wrap">
-    <div class="tape" id="tape"></div>
-  </div>
 </header>
 
 <div class="wrap">
@@ -309,9 +294,7 @@
       <div class="hero-grid">
         <div class="hero-main">
           <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span></div>
-          <div class="sub"><span class="ky">Të kyçura:</span> <b id="lockVal">—</b>
-            <span class="pro">· Në proces:</span> <b id="openVal">—</b>
-            · Equity: <span id="eqVal">—</span></div>
+          <div class="sub">të fituara që nga fillimi · Equity: <span id="eqVal">—</span></div>
         </div>
         <div class="hero-side">
           <div class="hstat"><span class="hl" id="scanLbl">GRAFIKË TË SKANUAR</span><span class="hv" id="scanVal">0</span></div>
@@ -319,7 +302,6 @@
         </div>
       </div>
       <div class="hero-foot">Sot: <b id="todayVal">+0.00 USDT</b> · <span id="sessMeta">—</span></div>
-      <div class="hero-legend">💡 Të kyçura = ruhen (në llogari) · Në proces = lëvizin me çmimet</div>
     </div>
 
     <div class="stats">
@@ -342,13 +324,11 @@
     </div>
 
     <div class="card">
-      <h3>⚙️ 6-Cycle Execution Pipeline · 26 Agjentë + 🧩 Ensemble</h3>
-      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar agjentët dhe ensemblin…</div>
+      <h3>⚙️ 6-Cycle Execution Pipeline · 20 Agjentë</h3>
+      <div class="agents-line" id="agentsLine">🤖 Duke ngarkuar 20 agjentët…</div>
       <div class="agrid" id="agentsGrid"></div>
       <div class="pipe" id="pipeSteps"></div>
       <div class="pipe-msg" id="pipeMsg">Duke nisur...</div>
-      <div id="riskBadge" style="display:none;margin:6px 0 4px;padding:8px 10px;border-radius:10px;
-        font-size:11.5px;font-weight:600;line-height:1.5"></div>
       <div class="conf-bar"><div class="conf-fill" id="confFill" style="width:0%"></div></div>
       <div class="ai-box" id="aiBox" onclick="toggleAiDetail()">
         <div class="ai-head">
@@ -390,31 +370,6 @@
         <div class="lstat"><div class="n" id="lSysWr">—</div><div class="l">win rate i sistemit</div></div>
         <div class="lstat"><div class="n up" id="lPrag">0.05</div><div class="l">pragu adaptiv</div></div>
       </div>
-      <div style="background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px">
-        <div style="font-size:11px;color:var(--mut);margin-bottom:8px"><b>Kontrolli i mësimit</b> — vendose si të duash, ruhet në server:</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <span style="font-size:11px;color:var(--dim);width:110px">Pragu (guxim)</span>
-          <select id="thrSel" class="sel" style="flex:1" onchange="saveLearning()">
-            <option value="0.03">0.03 · shumë guximtar</option>
-            <option value="0.04">0.04 · guximtar</option>
-            <option value="0.05">0.05 · normal</option>
-            <option value="0.07">0.07 · i kujdesshëm</option>
-            <option value="0.10">0.10 · shumë i kujdesshëm</option>
-          </select>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:11px;color:var(--dim);width:110px">Shpejtësia e mësimit</span>
-          <select id="spdSel" class="sel" style="flex:1" onchange="saveLearning()">
-            <option value="1">×1 · normal</option>
-            <option value="2">×2 · më shpejt</option>
-            <option value="3">×3 · shumë shpejt</option>
-          </select>
-        </div>
-        <div style="font-size:9.5px;color:var(--dim);line-height:1.5;margin-top:6px">
-          Pragu më i ulët = boti hyn më shpejt (më shumë tregti) · më i lartë = më i kujdesshëm.
-          Shpejtësia e mësimit = sa shpejt strategjitë konsiderohen "të trajnuara".
-        </div>
-      </div>
       <canvas id="learnChart" style="height:110px"></canvas>
       <div class="chart-foot"><span>Kurba e mësimit — pesha mesatare e strategjive</span><span id="learnGrowth">—</span></div>
       <div id="learnList" style="margin-top:10px"></div>
@@ -444,7 +399,7 @@
     <div class="sec-t">🧪 Backtest (provë historike)</div>
     <div class="card">
       <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:10px">
-        Provon strategjinë 26-agjente në <b>~37 ditë të dhënash 1-orëshe</b>
+        Provon strategjinë 20-agjente në <b>~37 ditë të dhënash 1-orëshe</b>
         për 10 monedha, me <b>tarifa reale 0.1%/anë</b>. Ky është testi më i
         ndershëm përpara parave reale.
       </p>
@@ -498,37 +453,6 @@
         <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
         <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
       </div>
-      <div class="set" style="margin-top:2px">
-        <div><div class="l">💥 Forca e komponimit</div><div class="d">×1 normal · ×5 agresiv — Risk Manager-i e ul automatikisht në ×1 kur humbjet fillojnë</div></div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <select id="cmSel" class="sel" style="max-width:90px" onchange="saveCompoundMult()">
-            <option value="1">×1</option>
-            <option value="2">×2</option>
-            <option value="3">×3</option>
-            <option value="4">×4</option>
-            <option value="5">×5</option>
-          </select>
-        </div>
-      </div>
-      <div class="set" style="border-top:1px dashed rgba(56,189,248,.4);margin-top:6px">
-        <div><div class="l">💵 Rrezik Fiks në $</div><div class="d">Çdo tregti hyn me <b id="fxEntryLbl">$3</b> · humbje max <b id="fxLossLbl">$1</b> — pavarësisht ×1–×5</div></div>
-        <div class="switch" id="swFx" onclick="toggleFixedRisk()"></div>
-      </div>
-      <div style="margin:10px 0 2px;font-size:12px;color:var(--mut)">Shumat e tua (të ruhen në server):</div>
-      <div class="set" style="margin-top:4px">
-        <div><div class="l">Hyrja për tregti</div><div class="d">USDT çdo herë — vendose si të duash</div></div>
-        <input type="number" id="fxEntry" min="1" step="0.5" value="3" class="inp" style="width:84px">
-      </div>
-      <div class="set">
-        <div><div class="l">Humbja maksimale</div><div class="d">USDT — asnjëherë më shumë se kjo</div></div>
-        <input type="number" id="fxLoss" min="0.25" step="0.25" value="1" class="inp" style="width:84px">
-      </div>
-      <button class="btn btn-green" id="btnFxSave" style="width:100%;margin:8px 0 2px" onclick="saveFixedRisk()">💾 Ruaj në server</button>
-      <div id="fxSaved" style="font-size:10.5px;color:var(--green);margin-top:4px;display:none">✅ U ruajt në server — do të mbetet edhe pas rindezjes</div>
-      <div style="font-size:10px;color:var(--dim);line-height:1.5;margin:6px 0 4px">
-        Kur Rreziku Fiks është ON, ×1–×5 <b>NUK ndikojnë</b> — çdo tregti hyn me shumën
-        tënde dhe SL-i e mban humbjen nën kufirin. (Në Real Mode, minimumi i Binance ~$5.)
-      </div>
       <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
         <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
         <div class="switch on" id="swLock" onclick="toggleLock()"></div>
@@ -558,7 +482,7 @@
       <div id="realStatus" style="display:none;margin:4px 0 8px;padding:10px;border-radius:10px;
         background:var(--card2);border:1px solid var(--line);font-size:11.5px;color:var(--mut);line-height:1.7"></div>
       <div class="set">
-        <div><div class="l">Cikli i botit</div><div class="d">100,000 agjentë votojnë me mostër rrotulluese · koordinatori ekzekuton çdo <b id="cycleSec">4</b> sekonda</div></div>
+        <div><div class="l">Cikli i botit</div><div class="d">6 agjentë + koordinator, çdo <b id="cycleSec">4</b> sekonda</div></div>
         <div class="kbd">LIVE</div>
       </div>
       <div class="set">
@@ -570,25 +494,6 @@
         <div class="kbd" id="modeKbd">KOMPONIM</div>
       </div>
     </div>
-    <div class="sec-t">📡 TradingView</div>
-    <div class="card">
-      <p style="font-size:12px;color:var(--mut);line-height:1.6;margin-bottom:8px">
-        Lidh <b>TradingView</b> me botin: kur vendos një alarm në TradingView,
-        sinjali vjen te boti dhe ekzekutohet me rregullat e tua (rreziku fiks $,
-        ×N, etj.).
-      </p>
-      <div style="font-size:11px;color:var(--mut);line-height:1.7;margin-bottom:8px">
-        <b>Si ta lidhësh:</b><br>
-        1. Në TradingView (Premium): krijo <b>Alert</b> → në <b>Webhook URL</b> ngjit:<br>
-        <code style="color:var(--blue);word-break:break-all" id="tvUrl">https://waynis-ai-1.onrender.com/api/webhook/tradingview</code><br>
-        2. Në <b>Message</b> vendos: <code style="color:var(--green)">{"symbol":"BTCUSDT","side":"buy"}</code><br>
-        3. Kur alarmi ndizet → boti ekzekuton tregtinë.<br>
-        <span style="color:var(--dim)">side: <b>buy</b> (LONG) ose <b>sell</b> (SHORT) · simboli pa vizë: BTCUSDT</span>
-      </div>
-      <button class="btn btn-ghost" id="btnTvTest" style="width:100%" onclick="testTv()">🧪 Testo sinjalin TradingView</button>
-      <div id="tvResult" style="font-size:11.5px;margin-top:8px;line-height:1.6"></div>
-    </div>
-
     <div class="sec-t">📈 DCA (blerje e rregullt)</div>
     <div class="card" style="padding:4px 12px">
       <div class="set">
@@ -766,7 +671,7 @@ const S = {
   symbol:"BTC-USDT", interval:"1m", tab:"home", lastCycleMsg:"",
   livePrice:null, lastPrice:null, priceFlash:0
 };
-const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT","NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","INJ-USDT","LTC-USDT","TRX-USDT","UNI-USDT","TIA-USDT","SEI-USDT","WIF-USDT","AAVE-USDT","LDO-USDT","FET-USDT","RENDER-USDT","HBAR-USDT","ATOM-USDT","FIL-USDT"];
+const SYMBOLS = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","DOGE-USDT","ADA-USDT","AVAX-USDT","LINK-USDT","SUI-USDT","DOT-USDT","PEPE-USDT","NEAR-USDT","APT-USDT","ARB-USDT","OP-USDT","INJ-USDT","LTC-USDT","TRX-USDT","UNI-USDT"];
 const TFS = ["1m","5m","15m","1h","4h","1d"];
 const $ = id => document.getElementById(id);
 
@@ -799,9 +704,7 @@ function tickSession(){
 setInterval(tickSession, 1000);
 
 /* ================= helpers ================= */
-const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—"
-  : Number.isInteger(n) ? n.toLocaleString("en-US")
-  : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt = (n,d=2) => (n==null||isNaN(n)) ? "—" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const fmtPrice = p => p==null? "—" : Number(p).toLocaleString("en-US",{maximumFractionDigits: p>=1000?2 : p>=1?4 : 8});
 const fmtTime = iso => { try{ return new Date(iso).toLocaleTimeString("sq",{hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } };
 const sign = n => n>0?"+":"";
@@ -810,17 +713,8 @@ function toast(msg,ms=3200){ const t=$("toast"); t.textContent=msg; t.classList.
 /* ================= data fetching ================= */
 async function jf(url,opts){ const r = await fetch(url,opts); if(!r.ok) throw new Error(url+" "+r.status); return r.json(); }
 async function refreshStatus(){
-  try{ S.status = await jf("/api/status"); renderStatus(); pulseLive(); }
+  try{ S.status = await jf("/api/status"); renderStatus(); }
   catch(e){ /* offline */ }
-}
-// pulse: ndez treguesin LIVE sa herë që vijnë të dhëna — provë se faqja s'është e ngrirë
-let pulseT=0;
-function pulseLive(){
-  const dot=document.querySelector(".dot");
-  if(!dot) return;
-  dot.style.transform="scale(1.6)";
-  clearTimeout(pulseT);
-  pulseT=setTimeout(()=>{ dot.style.transform="scale(1)"; }, 250);
 }
 async function refreshTickers(){
   try{ const d = await jf("/api/tickers"); S.tickers = d.tickers; renderTickers(); }
@@ -854,12 +748,6 @@ function renderStatus(){
   $("todayVal").textContent = sign(st.pnl_24h)+fmt(st.pnl_24h)+" USDT";
   $("todayVal").className = st.pnl_24h>=0?"up":"dn";
   $("eqVal").textContent = fmt(a.equity)+" USDT";
-  // "Të kyçura" = fitimi i mbyllur (ruhet; ndryshon vetëm kur mbyllet një tregti)
-  // "Në proces" = pozicionet e hapura (lëvizin me tregun çdo sekondë)
-  const locked = st.realized || 0, openv = a.unrealized || 0;
-  const elLock = $("lockVal"), elOpen = $("openVal");
-  elLock.textContent = (locked>=0?"+":"")+fmt(locked)+" USDT"; elLock.className = locked>=0?"up":"dn";
-  elOpen.textContent = (openv>=0?"+":"")+fmt(openv)+" USDT"; elOpen.className = openv>=0?"up":"dn";
   const p=st.pnl_24h;
   const e=$("pnl24"); e.textContent = sign(p)+fmt(p)+" USDT"; e.className="v "+(p>=0?"up":"dn");
   $("winrate").textContent = fmt(st.win_rate,1)+"%";
@@ -882,14 +770,6 @@ function renderStatus(){
   const sw=$("swCompound");
   sw.classList.toggle("on", !!S.status.compound);
   $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
-  const cm=$("cmSel"); if(cm) cm.value = String(S.status.compound_mult||1);
-  // 💵 fixed dollar risk
-  const fx=S.status.fixed_risk||{};
-  $("swFx").classList.toggle("on", !!fx.enabled);
-  $("fxEntryLbl").textContent = "$"+(fx.entry_usd||3);
-  $("fxLossLbl").textContent = "$"+(fx.max_loss_usd||1);
-  $("fxEntry").value = fx.entry_usd||3;
-  $("fxLoss").value = fx.max_loss_usd||1;
   const g=a.growth||1;
   const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
   // mode state (paper / real)
@@ -922,28 +802,6 @@ function renderStatus(){
   const lkEl=$("lockState");
   if(lk.locked){ lkEl.textContent="🔒 AKTIV — push"; lkEl.style.color="var(--amber)"; }
   else { lkEl.textContent = lk.enabled?"Gati (mbrojtje aktive)":"OFF"; lkEl.style.color=""; }
-  // 🛡️ adaptive risk badge
-  const rk = S.status.risk||{};
-  const rb=$("riskBadge");
-  if(rk.paused){
-    rb.style.display="block";
-    rb.style.background="rgba(239,68,68,.15)";
-    rb.style.border="1px solid rgba(239,68,68,.5)";
-    rb.style.color="#fca5a5";
-    rb.textContent=`🛡️ RISK MANAGER: PUSH — humbje të zbuluara (WR ${rk.wr??"—"}%) · push derisa tregu të stabilizohet`;
-  } else if(rk.effective_mult && rk.user_mult && rk.effective_mult < rk.user_mult){
-    rb.style.display="block";
-    rb.style.background="rgba(251,191,36,.12)";
-    rb.style.border="1px solid rgba(251,191,36,.5)";
-    rb.style.color="var(--amber)";
-    rb.textContent=`🛡️ Mbrojtja aktive: ×${rk.user_mult} → ×${rk.effective_mult} (WR ${rk.wr??"—"}%) — fitimet mbrohen nga ×2`;
-  } else if(rk.effective_mult && rk.effective_mult>=2){
-    rb.style.display="block";
-    rb.style.background="rgba(34,197,94,.1)";
-    rb.style.border="1px solid rgba(34,197,94,.4)";
-    rb.style.color="var(--green)";
-    rb.textContent=`🛡️ Risk Manager në vëzhgim · ×${rk.effective_mult} aktiv — do të ulë në ×1 nëse humbjet fillojnë`;
-  } else { rb.style.display="none"; }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
   renderAgentsGrid(S.status.agents);
@@ -968,22 +826,13 @@ function renderPipeline(pp){
 }
 function renderAgentsLine(agents){
   if(!agents) return;
-  const ens = (S.status&&S.status.ensemble)||{};
-  const nv = ens.variants||0;
-  const core = agents.filter(a=>a.name!=="Ensemble");
-  const nc = core.length;
-  const nvf = nv.toLocaleString("en-US");
-  const total = (nc+nv).toLocaleString("en-US");
-  $("agentsLine").innerHTML = `🤖 <b>${nc} agjentë bërthamë</b> + 🧩 <b>${nvf} variante strategjike</b> ` +
-    `= <b>${total} agjentë</b> që bashkëpunojnë: çdo cikël voton një mostër rrotulluese, çdo familje (EMA, RSI, MACD…) ka një zë të barabartë`;
+  $("agentsLine").innerHTML = "🤖 <b>20 agjentë bashkëpunues</b>: 10 strategji votojnë → " +
+    "🗳️ konsensus me pesha të mësuara · 🎓 mësojnë pas çdo tregtie";
 }
 function renderAgentsGrid(agents){
   if(!agents) return;
   const active = S.status && S.status.pipeline ? S.status.pipeline.agent : "";
-  const ens = (S.status&&S.status.ensemble)||{};
-  const nv = ens.variants||0;
-  const core = agents.filter(a=>a.name!=="Ensemble");
-  let html = core.map(a=>{
+  $("agentsGrid").innerHTML = agents.map(a=>{
     let w = "";
     if(a.kind==="strategy" && a.trades>0){
       const cls = a.weight>=1.0 ? "" : "low";
@@ -992,12 +841,6 @@ function renderAgentsGrid(agents){
     return `<div class="ag ${a.name===active?"active":""}" title="${a.role}">
       <span class="ai">${a.icon}</span><span class="an">${a.name}</span>${w}</div>`;
   }).join("");
-  // ensemble tile
-  html += `<div class="ag ${active==="Ensemble"?"active":""}" style="border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.08)"
-    title="${nv.toLocaleString("en-US")} agjentë strategjikë (EMA, RSI, MACD, BOLL, MOM, STOCH, ATR, CCI, MFI, SMA, TRIX...) — çdo cikël një mostër rrotulluese voton së bashku">
-    <span class="ai">🧩</span><span class="an">Ensemble</span>
-    <span class="aw">×${nv}</span></div>`;
-  $("agentsGrid").innerHTML = html;
 }
 
 /* ================= AI reasoning panel ================= */
@@ -1107,7 +950,7 @@ function drawChart(){
     if(isLast && S.livePrice){
       // interpolate the forming candle toward the latest live price
       const liveY = ys(S.livePrice);
-      yC = yC + (liveY - yC) * 0.5;
+      yC = yC + (liveY - yC) * 0.35;
     }
     const y=Math.min(yO,yC), hh=Math.max(1.5,Math.abs(yO-yC));
     ctx.fillRect(x-bw/2, y, bw, hh);
@@ -1252,20 +1095,6 @@ async function saveDcaSettings(){
   }catch(e){}
 }
 
-async function testTv(){
-  const b=$("btnTvTest"); b.disabled=true; b.textContent="⏳ Duke dërguar…";
-  $("tvResult").innerHTML='<span class="ai-thinking">📡 Duke dërguar sinjal test (LONG BTC-USDT)…</span>';
-  try{
-    const d=await jf("/api/webhook/tradingview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symbol:"BTCUSDT",side:"buy"})});
-    $("tvResult").innerHTML = d.ok
-      ? `✅ <b>Sinjali u pranua!</b> ${d.direction} ${d.symbol} · qty ${d.qty} · mode ${d.mode}`
-      : `⚠️ ${d.error||"Gabim"}`;
-    toast(d.ok?"📡 TradingView sinjal u ekzekutua":"TradingView: "+d.error);
-    refreshAll();
-  }catch(e){ $("tvResult").innerHTML='<span style="color:var(--red)">Gabim — provo sërish</span>'; }
-  b.disabled=false; b.textContent="🧪 Testo sinjalin TradingView";
-}
-
 async function runDcaBacktest(){
   const b=$("btnDcaBt"); b.disabled=true; b.textContent="⏳…";
   const sym=$("dcaBtSym").value||"BTC-USDT";
@@ -1305,10 +1134,6 @@ function renderLearning(){
   wrEl.className = "n "+(wr!=null&&wr>=50?"up":"dn");
   const th=$("lPrag"); th.textContent = (meta.threshold||0.05).toFixed(2);
   th.className = "n "+(meta.threshold<=0.05?"up":"dn");
-  // user learning controls
-  const lc = (S.status&&S.status.learning_ctrl)||{};
-  if($("thrSel")) $("thrSel").value = String(lc.threshold!=null?lc.threshold:0.05);
-  if($("spdSel")) $("spdSel").value = String(lc.speed||1);
   // strategy rows
   const names=Object.keys(sts).sort((a,b)=>(sts[b].weight||1)-(sts[a].weight||1));
   $("learnList").innerHTML = names.map(n=>{
@@ -1362,19 +1187,7 @@ function drawLearnChart(){
 }
 const EMOJI={"EMA Trend":"📈","RSI Reversal":"🔄","MACD Momentum":"🌊","Bollinger Break":"🎈",
   "Stochastic":"⚡","Volume Spike":"🔊","ATR Channel":"📏","Donchian Break":"🚀",
-  "ROC Momentum":"🏎️","Slow Trend":"🐢","Supertrend":"🌀","ADX Trend":"💪",
-  "VWAP Break":"⚖️","Williams %R":"🎯","Keltner Break":"📐","OBV Momentum":"📦"};
-
-async function saveLearning(){
-  const t=parseFloat($("thrSel").value)||0.05;
-  const s=parseFloat($("spdSel").value)||1;
-  try{
-    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({threshold:t, learn_speed:s})});
-    S.status.learning_ctrl=d.learning_ctrl;
-    toast(`🎓 Pragu ${t} · mësimi ×${s} — u ruajt në server`);
-    refreshStatus();
-  }catch(e){ toast("Gabim"); }
-}
+  "ROC Momentum":"🏎️","Slow Trend":"🐢"};
 
 /* ================= render: feed ================= */
 function renderTickers(){
@@ -1386,12 +1199,6 @@ function renderTickers(){
       <div class="sym">${t.symbol.replace("-USDT","")}<small>USDT · Spot</small></div>
       <div class="px">${fmtPrice(t.price)}<small class="${t.chg24>=0?'up':'dn'}">${t.chg24>=0?'▲':'▼'} ${fmt(Math.abs(t.chg24),2)}% 24h</small></div>
     </div>`).join("");
-  // ticker tape (doubled for a seamless loop)
-  const tape = S.tickers.slice(0, 12).map(t=>
-    `<span class="tk"><b>${t.symbol.replace("-USDT","")}</b> ${fmtPrice(t.price)} `+
-    `<span class="${t.chg24>=0?'up':'dn'}">${t.chg24>=0?'▲':'▼'}${fmt(Math.abs(t.chg24),1)}%</span></span>`
-  ).join("");
-  $("tape").innerHTML = tape + tape;   // duplicate → endless scroll
 }
 function renderEvents(){
   if(!S.events.length){ $("eventList").innerHTML='<div class="empty">Nuk ka ngjarje ende</div>'; return; }
@@ -1400,7 +1207,6 @@ function renderEvents(){
       : ev.type==="close"?'<span class="badge b-win">EXIT</span>'
       : ev.type==="ai"?'<span class="badge bl">AI</span>'
       : ev.type==="lock"?'<span class="badge" style="background:rgba(251,191,36,.15);color:var(--amber)">🔒 LOCK</span>'
-      : ev.type==="risk"?'<span class="badge" style="background:rgba(239,68,68,.15);color:var(--red)">🛡️ RISK</span>'
       : ev.type==="seed"||ev.type==="reset"||ev.type==="settings"?'<span class="badge">SYS</span>'
       : '<span class="badge">INFO</span>';
     return `<div class="ev"><span class="t">${fmtTime(ev.ts)}</span><span class="m">${dot} ${ev.msg}</span></div>`;
@@ -1522,38 +1328,6 @@ async function toggleCompound(){
     refreshEquity();
   }catch(e){ sw.classList.toggle("on"); }
 }
-async function saveCompoundMult(){
-  const v=parseFloat($("cmSel").value)||1;
-  try{
-    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({compound_mult:v})});
-    S.status.compound_mult=d.compound_mult;
-    toast(d.compound_mult>=2?`💥 Komponimi ×${d.compound_mult} — fitime ×${d.compound_mult}, por Risk Manager-i mbron humbjet`:"Komponimi ×1 normal");
-    refreshStatus();
-  }catch(e){ toast("Gabim"); }
-}
-async function toggleFixedRisk(){
-  const sw=$("swFx"); const on=!sw.classList.contains("on");
-  sw.classList.toggle("on", on);
-  try{
-    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_risk_enabled:on})});
-    S.status.fixed_risk=d.fixed_risk; renderStatus();
-    toast(on?`💵 Rrezik fiks ON — hyrje $${d.fixed_risk.entry_usd}, humbje max $${d.fixed_risk.max_loss_usd} (pavarësisht ×N)`:"💵 Rrezik fiks OFF — kthehet te ×N");
-  }catch(e){ sw.classList.toggle("on", !on); }
-}
-async function saveFixedRisk(){
-  const en=parseFloat($("fxEntry").value)||3;
-  const ml=parseFloat($("fxLoss").value)||1;
-  if(en<1||ml<0.25){ toast("Hyrja ≥$1 · Humbja max ≥$0.25"); return; }
-  const b=$("btnFxSave"); b.disabled=true; b.textContent="⏳ Duke ruajtur…";
-  try{
-    const d=await jf("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fixed_entry_usd:en, fixed_max_loss_usd:ml, fixed_risk_enabled:true})});
-    S.status.fixed_risk=d.fixed_risk; renderStatus();
-    const s=$("fxSaved"); s.style.display="block";
-    setTimeout(()=>{ s.style.display="none"; }, 4000);
-    toast(`💾 U ruajt në server: hyrje $${en} · humbje max $${ml}`);
-  }catch(e){ toast("Gabim — provo sërish"); }
-  b.disabled=false; b.textContent="💾 Ruaj në server";
-}
 async function toggleLock(){
   const sw=$("swLock"); sw.classList.toggle("on");
   const on=sw.classList.contains("on");
@@ -1652,7 +1426,7 @@ loadAISettings();
 setInterval(refreshStatus, 4000);
 setInterval(refreshEvents, 5000);
 setInterval(refreshTrades, 8000);
-setInterval(refreshTickers, 2000);   // live price every 2s → chart moves non-stop
+setInterval(refreshTickers, 10000);
 setInterval(()=>{ if(!document.hidden && S.tab==="trades"){ refreshEquity(); refreshLearning(); } }, 15000);
 setInterval(()=>{ if(document.hidden===false && S.tab==="home") refreshKlines(); }, 2500);
 window.addEventListener("resize", drawChart);
@@ -1673,11 +1447,9 @@ function animLoop(ts){
 requestAnimationFrame(animLoop);
 wsConnect();
 
-// PWA service worker — v2: network-first, pastron cache të vjetër
+// PWA service worker (optional, best-effort)
 if("serviceWorker" in navigator && location.protocol.startsWith("https")){
-  navigator.serviceWorker.register("/sw.js").then(reg=>{
-    reg.update().catch(()=>{});
-  }).catch(()=>{});
+  navigator.serviceWorker.register("/sw.js").catch(()=>{});
 }
 </script>
 </body>

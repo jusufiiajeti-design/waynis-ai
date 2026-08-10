@@ -1,8 +1,5 @@
 """
-Waynis AI — ENHANCED LEARNING SYSTEM for the 28 core agents + 100,000-variant ensemble.
-
-Learning is done per STRATEGY FAMILY (EMA, RSI, MACD, ...) so the weights
-file stays tiny even with 100,000 registered variants.
+Waynis AI — ENHANCED LEARNING SYSTEM for the 20 agents.
 
 After every closed trade we attribute its PnL to the strategies that voted
 for it (trade.votes) and recompute, per strategy:
@@ -32,12 +29,6 @@ import time
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "data", "strategy_weights.json")
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "data", "learning_history.json")
 
-def family_key(name):
-    """P.sh. 'EMA(3,7)' → 'EMA'; 'EMA Trend' mbetet 'EMA Trend'.
-    Kështu mësimi bëhet në nivel familjeje edhe me 100,000 variante."""
-    return name.split("(")[0] if "(" in name else name
-
-
 DEFAULT_STATS = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0,
                  "gross_win": 0.0, "gross_loss": 0.0, "recent": [],
                  "weight": 1.0, "updated_at": None}
@@ -53,7 +44,7 @@ HISTORY_MAX = 240           # learning-curve points kept
 # ---------------------------------------------------------------------------
 # Weight computation
 # ---------------------------------------------------------------------------
-def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
+def compute_weight(st):
     t = st["trades"]
     if t == 0:
         return 1.0
@@ -68,15 +59,15 @@ def compute_weight(st, explore_min=EXPLORE_MIN_TRADES):
     w += max(-0.40, min(0.40, wr * 0.50))                 # win-rate edge
     w += max(-0.20, min(0.25, (pf - 1.0) * 0.15))         # profit-factor edge
     w += max(-0.25, min(0.30, rec / 40.0))                # recency
-    if t < explore_min:                                   # exploration bonus
-        w += (explore_min - t) / explore_min * 0.25
+    if t < EXPLORE_MIN_TRADES:                            # exploration bonus
+        w += (EXPLORE_MIN_TRADES - t) / EXPLORE_MIN_TRADES * 0.25
     return max(WEIGHT_MIN, min(WEIGHT_MAX, round(w, 3)))
 
 
 # ---------------------------------------------------------------------------
 # Aggregate per-strategy stats from the trades table
 # ---------------------------------------------------------------------------
-def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
+def aggregate_from_trades(conn, last_id=0):
     """Returns (stats dict keyed by strategy name, max trade id processed)."""
     rows = conn.execute(
         "SELECT id, votes, status, pnl FROM trades "
@@ -92,7 +83,6 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
         except Exception:
             continue
         for name in names:
-            name = family_key(name)              # mësim në nivel familjeje
             st = stats.setdefault(name, dict(DEFAULT_STATS))
             st["trades"] += 1
             p = pnl or 0.0
@@ -107,7 +97,7 @@ def aggregate_from_trades(conn, last_id=0, explore_min=EXPLORE_MIN_TRADES):
             if len(st["recent"]) > RECENT_WINDOW:
                 st["recent"] = st["recent"][-RECENT_WINDOW:]
     for name, st in stats.items():
-        st["weight"] = compute_weight(st, explore_min)
+        st["weight"] = compute_weight(st)
         st["updated_at"] = time.time()
         # keep the dict clean for JSON
         st["recent"] = [round(x, 2) for x in st["recent"][-10:]]
@@ -133,17 +123,15 @@ def enrich(stats):
 # Meta-learning: adaptive consensus threshold from rolling system results
 # ---------------------------------------------------------------------------
 def meta_threshold(recent_results, base=BASE_THRESHOLD):
-    """base = user preference (default 0.05). The system nudges it:
-    winning → looser (0.8×), losing → stricter (1.6×), clamped 0.03..0.12."""
     if not recent_results:
-        return round(base, 3)
+        return base
     wins = sum(1 for r in recent_results if r > 0)
     wr = wins / len(recent_results)
     if wr >= 0.55:
         return round(max(0.03, base * 0.8), 3)      # exploit — looser
     if wr <= 0.42:
-        return round(min(0.12, base * 1.6), 3)      # conserve — stricter
-    return round(base, 3)
+        return round(min(0.10, base * 1.6), 3)      # conserve — stricter
+    return base
 
 
 def system_win_rate(recent_results):
@@ -169,8 +157,6 @@ def load_weights():
 
 def save_weights(stats):
     try:
-        # ruaj vetëm familjet/strategjitë me të dhëna — skedari mbetet i vogël
-        stats = {k: v for k, v in stats.items() if v.get("trades", 0) > 0}
         os.makedirs(os.path.dirname(WEIGHTS_PATH), exist_ok=True)
         with open(WEIGHTS_PATH, "w") as f:
             json.dump(stats, f, indent=2)

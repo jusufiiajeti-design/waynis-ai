@@ -1,19 +1,14 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 3               # coordinator cycle period (cache = faster)
-SCAN_BATCH = 32                 # symbols scanned per cycle (all watchlist)
-TRADE_TF = "5m"                 # ⏱️ korniza 5-minutëshe — E FIKSUAR (kërkesa e përdoruesit: mos e ndërro)
-KLINES_TTL = 20.0               # cache klines (5m qirinj) — cikle më të shpejta
+CYCLE_SECONDS = 4               # coordinator cycle period
+SCAN_BATCH = 12                 # symbols scanned per cycle (watchlist now 20)
 TRADE_RISK = 0.0075             # fraction of (base) equity risked per trade
-TAKE_PROFIT = 0.35              # TP 35% = vetëm rrjet sigurie MBI shkallën $5 — kurrë nuk ndërhyn me centa
+TAKE_PROFIT = 0.0045            # +0.45 %
 STOP_LOSS = 0.0035              # -0.35 %
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 20                   # max concurrent open positions (many slots → non-stop trading)
-COOLDOWN_SEC = 20               # cooldown pas mbylljes — më shumë tregti për $60/ditë
-MAX_HOLD_MIN = 40               # time-stop: close a position after 40 min if it hasn't hit TP
-TIME_STOP_SL = 0.0015           # time-stop closes at -0.15% (small, frees the slot fast)
+MAX_OPEN = 4                    # max concurrent open positions (paper)
 
 # ---- real money (spot, LONG-only) ----
 FEE_RATE = 0.001                # 0.1% per side (taker) — also simulated in paper
@@ -31,36 +26,6 @@ PARTIAL_FRACTION = 0.5          # fraction sold at TP1
 TRAIL_PCT = 0.004               # runner trails 0.4% below its peak
 RUNNER_BE = 0.0005              # runner SL floor = entry + 0.05% (never loses)
 REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
-COMPOUND_MULT_MAX = 5.0         # max compound multiplier (×1..×5 user)
-
-# ---- 🛡️ adaptive risk (protects against ×2 losses) ----
-RISK_ADAPTIVE_ENABLED = True    # risk manager watches recent performance
-RISK_LOOKBACK = 10              # last N closed trades evaluated
-RISK_BAD_WR = 0.45              # if win rate below this → de-risk
-RISK_BAD_NET = 0.0              # if net pnl over lookback below this → de-risk
-RISK_DELEVERAGE_TO = 1.0        # auto-reduce multiplier to ×1 when losing
-RISK_PAUSE_MIN = 15             # pause new trades for N minutes when losing
-RISK_RESUME_MIN = 3             # re-evaluate after N minutes
-
-# ---- 💵 fixed dollar risk (entry e fiksuar, humbje maksimale e fiksuar) ----
-# Hyrja $10–15 (sipas përdoruesit) · fitime të arsyeshme $1–$3+ të kapura
-# nga agjentët me shkallë fitimi. Përdoruesi i ndryshon nga Cilësimet.
-FIXED_RISK_ENABLED = True         # ON by default: entry fixed, loss capped
-FIXED_ENTRY_USD = 15.0           # hyrja për tregti në USDT (min 10, max 15)
-FIXED_MAX_LOSS_USD = 2.0         # kufiri i humbjes për tregti (i arsyeshëm)
-
-# ---- 💵 profit ladder (shkallët e fitimit që agjenti i kap) ----
-# VETËM dollarë të plotë: $1, $2, $3, $4, $5 — kurrë centa (p.sh. JO $1.04).
-# Fitimi neto (pas tarifave) matet kundrejt shkallës dhe kapet si dollar i plotë.
-PROFIT_LADDER = [5.0, 4.0, 3.0, 2.0, 1.0]
-
-# ---- 🧩 ensemble (hundreds of strategy variants) ----
-ENSEMBLE_ENABLED = True          # strategy variants vote with the core
-AGENT_TARGET = 100_000          # 100,000 agjentë (variante strategjike) që bashkëpunojnë me vota.
-                                 # Çdo cikël voton një mostër rrotulluese (shpejtësia mbetet e njëjtë);
-                                 # çdo familje (EMA, RSI, MACD…) ka një zë të barabartë.
-
-
 
 # ---- 🔒 equity profit lock (protect account gains) ----
 # Once the account grows to a peak, never let it give back more than
