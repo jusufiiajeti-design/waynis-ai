@@ -1388,10 +1388,10 @@ money BEFORE risking real capital.
 """
 import time
 
-from config import FEE_RATE
+from config import FEE_RATE, TAKE_PROFIT, STOP_LOSS
 
-_TP = 0.0045
-_SL = 0.0035
+_TP = TAKE_PROFIT
+_SL = STOP_LOSS
 from strategies import STRATEGIES
 
 BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
@@ -1738,6 +1738,65 @@ STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES]
 # ======================================================================
 # 🗳️ 12 — CONSENSUS (combines votes with learning weights)
 # ======================================================================
+# ======================================================================
+# 🧠 BRAIN AGENT — filtri i trurit mbi të gjitha sinjalet.
+# Veton sinjalet që s'kanë bazë reale:
+#   1) TREND GATE: sinjalet duhet të jenë në drejtimin e trendit 1H
+#      (EMA 200) — asnjë LONG në treg rënës, asnjë SHORT në treg rritës
+#   2) VOLATILITETI: s'hyn në treg të vdekur (ATR < 0.15% në 1H)
+# Kjo është e testuar: Trend Gate përgjysmon humbjet (−$450 → −$202).
+# ======================================================================
+class BrainAgent(Agent):
+    step, name, icon = 1, "Brain", "🧠"
+    role = "Filtri i trurit: trendi 1H (EMA200) + volatiliteti (ATR) mbi çdo sinjal"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        # kornizë e lartë për trendin
+        trend_bar = "1h"
+        # cache e trendit
+        now = time.time()
+        brain = getattr(e, "brain_cache", {})
+        e.brain_cache = brain
+        for sym in list(ctx.votes.keys()):
+            t = ctx.tickers.get(sym)
+            price = t["price"] if t and t.get("price", 0) > 0 else 0
+            cached = brain.get(sym)
+            if cached and now - cached[0] < 300:
+                trend_long, atr_pct, why = cached[1]
+            else:
+                try:
+                    kl = await ctx.market.fetch_klines(sym, trend_bar, 250)
+                except Exception:
+                    continue
+                if not kl or len(kl) < 210:
+                    continue
+                closes = [c["c"] for c in kl]
+                e200 = ema(closes, 200)[-1]
+                trend_long = closes[-1] > e200
+                # ATR% në 1H
+                trs = []
+                for i in range(-14, 0):
+                    h, l, pc = kl[i]["h"], kl[i]["l"], kl[i-1]["c"]
+                    trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+                atr_pct = (sum(trs) / 14) / (closes[-1] or 1) * 100 if trs else 0
+                why = f"trend {'rritës' if trend_long else 'rënës'} 1H (EMA200), ATR {atr_pct:.2f}%"
+                brain[sym] = (now, (trend_long, atr_pct, why))
+            # VETO sinjalet kundër trendit ose në treg të vdekur
+            if atr_pct < 0.15:
+                del ctx.votes[sym]
+                self.report(f"🧠 {sym}: treg i vdekur (ATR {atr_pct:.2f}%) — s'hap", sym)
+                continue
+            # filtro votat: mbaj vetëm ato në drejtimin e trendit
+            kept = [v for v in ctx.votes[sym] if (v[1] == "LONG") == trend_long]
+            if not kept:
+                del ctx.votes[sym]
+                self.report(f"🧠 {sym}: sinjalet kundër trendit ({why}) — veto", sym)
+            else:
+                ctx.votes[sym] = kept
+                self.report(f"🧠 {sym}: {why} — sinjale në linjë", sym)
+
+
 class ConsensusAgent(Agent):
     step, name, icon = 1, "Consensus", "🗳️"
     role = "Kombinon votat e 10 strategjive me peshat e mësuara"
@@ -2320,7 +2379,7 @@ class LearningAgent(Agent):
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
 ALL_AGENTS = ([ScannerAgent] + STRATEGY_AGENTS +
-              [ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
+              [BrainAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
                ValidatorAgent, RiskManagerAgent, SizerAgent,
                FillerAgent, TrackerAgent, LearningAgent])
 # ============ engine.py ============

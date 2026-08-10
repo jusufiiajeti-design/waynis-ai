@@ -9,10 +9,10 @@ money BEFORE risking real capital.
 """
 import time
 
-from config import FEE_RATE
+from config import FEE_RATE, TAKE_PROFIT, STOP_LOSS
 
-_TP = 0.0045
-_SL = 0.0035
+_TP = TAKE_PROFIT
+_SL = STOP_LOSS
 from strategies import STRATEGIES
 
 BACKTEST_NOTIONAL = 1000.0      # $ per position in the simulation
