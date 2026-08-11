@@ -47,6 +47,11 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
 WALL_LOCK_ENABLED = True
 WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
+# 🎯 Kufiri MINIMAL për t'u kyçur nga muri: muri NUK prek mikro-fitime
+# (+$0.01..+$0.30) sepse tarifat ($0.18) i kthejnë në humbje neto.
+# Kyç vetëm fitime reale: të paktën 0.5% e vlerës së pozicionit ose $0.50.
+WALL_MIN_LOCK_USD = 0.50
+WALL_MIN_LOCK_PCT = 0.005
 COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
@@ -71,8 +76,6 @@ MTF_BAR = "15m"
 MTF_FAST = 20                    # EMA fast period on MTF
 MTF_SLOW = 50                    # EMA slow period on MTF
 MTF_CACHE_TTL = 120              # seconds to cache MTF closes per symbol
-
-
 # ============ turso.py ============
 """
 Waynis AI — Turso (libsql) cloud persistence.
@@ -2807,6 +2810,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
                     PROFIT_LOCK_PAUSE_MIN,
                     WALL_LOCK_ENABLED, WALL_LOCK_STEP,
+                    WALL_MIN_LOCK_USD, WALL_MIN_LOCK_PCT,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
@@ -3702,23 +3706,32 @@ class PaperEngine:
     # 🧱 MURI I MBROJTJES — version i FORCUAR
     # ------------------------------------------------------------------
     def _raise_wall(self, equity_value):
-        """Ngre murin në nivelin më të lartë të arritur. Përdor equity-n
-        (fitimet e pahapura përfshihen) që muri të mbrojë edhe fitimet në
-        rrugë, jo vetëm ato të mbyllura."""
+        """Ngre murin vetëm nga FITIMET E REALIZUARA (bilanci i mbyllur),
+        kurrë nga kulmet e përkohshme të equity — kulmi i papjekur e ngrinte
+        murin mbi realitetin dhe muri bllokohej përgjithmonë sipër bilancit,
+        duke prerë çdo pozicion në mikro-fitim (defekti i fundit)."""
         try:
-            gain = equity_value - STARTING_BALANCE
-            if gain > self.wall_floor - STARTING_BALANCE:
-                new_floor = STARTING_BALANCE + int(gain) * 1.0
+            if equity_value > self.wall_floor:
+                new_floor = STARTING_BALANCE + int(equity_value - STARTING_BALANCE) * 1.0
                 if new_floor > self.wall_floor:
                     self.wall_floor = new_floor
                     s = _load_settings(); s["wall_floor"] = self.wall_floor
                     _save_settings(s)
                     self._event("wall",
                                 f"🧱 MURI U NGRIT në ${self.wall_floor:.0f} — "
-                                f"fitimi i arritur u kyç, s'bien më poshtë",
+                                f"fitimi i realizuar u kyç, s'bien më poshtë",
                                 None)
         except Exception:
             pass
+
+    def _wall_min_lock(self, p):
+        """Fitimi minimal që muri e konsideron 'të denjë për kyçje'.
+        Mikro-fitime nuk kyçen (tarifat i bëjnë humbje neto)."""
+        try:
+            notional = p.get("entry", 0) * p.get("qty", 0)
+            return max(WALL_MIN_LOCK_USD, notional * WALL_MIN_LOCK_PCT)
+        except Exception:
+            return WALL_MIN_LOCK_USD
 
     def unrealized_profit(self):
         """Shuma e fitoreve të pozicioneve të hapura tani (për murin)."""
@@ -3730,41 +3743,52 @@ class PaperEngine:
 
     async def check_wall(self):
         """🧱 KONTROLLI I MURIT — thirret çdo cikël:
-        - Ngre murin nëse equity është në nivel të ri maksimal (kyç fitimin)
-        - Kur equity bie nën murin: NUK i mbyll pozicionet drejt humbjes!
-          Vetëm KYÇ pozicionet që janë NË FITIM tani (fitimi i tyre shtohet
-          në mur); pozicionet me humbje i lë te SL e tyre natyral.
-          → muri vepron GJITHMONË drejt fitimit, kurrë drejt humbjes."""
+        1. Muri ngrihet VETËM nga bilanci (fitimet e kyçura) — jo nga kulmet
+           e equity që e bllokonin murin sipër realitetit.
+        2. 🛟 NËSE EQUITY ËSHTË NËN KAPITALIN FILLESTAR: muri NUK prek asgjë —
+           lë botin të tregtojë normalisht (TP 3% / SL 2%) për t'u rikuperuar.
+           Muri vepron GJITHMONË drejt fitimit, kurrë drejt humbjes.
+        3. Kur equity është nën murin POR MBI kapitalin fillestar: kyç vetëm
+           pozicionet me FITIM REAL (≥ 0.5% ose ≥ $0.50); mikro-fitimet i lë
+           të shkojnë te TP. Humbjet mbeten gjithmonë te SL-i i tyre."""
         if not WALL_LOCK_ENABLED or not getattr(self, "wall_floor", 0):
             return False
         try:
+            # 🔄 çmime të FRESKËTA PARA çdo vendimi — muri vendos GJITHMONË
+            # me çmime live, kurrë me last_tickers të vjetruara nga cikli i
+            # kaluar (në të kundërt vendimet bëhen mbi çmime të vjetra)
+            try:
+                fresh = await self.market.fetch_all_tickers()
+                if fresh:
+                    self.last_tickers = fresh
+            except Exception:
+                pass
             acc = self.account()
             eq = acc.get("equity", acc.get("balance", 0.0))
-            # 🧱 muri ngrihet edhe nga fitoret e hapura (para se të kyçen)
-            self._raise_wall(eq + self.unrealized_profit())
+            bal = acc.get("balance", eq)
+            # 🧱 muri ngrihet nga bilanci real (fitime të kyçura), kurrë nga
+            # kulmet e përkohshme të equity
+            self._raise_wall(bal)
             if eq < self.wall_floor:
-                # 🔄 çmime të FRESKËTA për të gjitha pozicionet (muri thirret
-                # para Scanner-it — pa këtë, pnl llogaritet me çmime të vjetra
-                # dhe shumë fitore nuk shihen → kyçej vetëm 1 pozicion)
-                try:
-                    fresh = await self.market.fetch_all_tickers()
-                    if fresh:
-                        self.last_tickers = fresh
-                except Exception:
-                    pass
+                # 🛟 NËN KAPITALIN FILLESTAR → RIPËRDORIM: s'mbyll asgjë,
+                # boti tregton lirshëm që të rikuperojë (TP punon sërish)
+                if eq < STARTING_BALANCE:
+                    return False
                 pos = self.open_positions()
                 n = 0
                 locked_usd = 0.0
                 for p in pos:
-                    # 💚 kyç TË GJITHA pozicionet NË FITIM (jo vetëm një!)
-                    if p.get("pnl", 0) > 0:
+                    # 💚 kyç vetëm FITIMET REALE — mikro-fitimet (+$0.01..)
+                    # i lë të shkojnë te TP 3%; tarifat i bëjnë humbje neto
+                    pnl = p.get("pnl", 0)
+                    if pnl > 0 and pnl >= self._wall_min_lock(p):
                         price = p.get("price") or p["entry"]
                         await self._close_trade(p, price, "wall")
                         n += 1
-                        locked_usd += p.get("pnl", 0)
+                        locked_usd += pnl
                 if n:
                     self._event("wall",
-                                f"🧱 MURI: u kyçën {n} pozicione në fitim "
+                                f"🧱 MURI: u kyçën {n} pozicione në fitim real "
                                 f"(+${locked_usd:.2f} gjithsej) — equity nën "
                                 f"${self.wall_floor:.0f}, humbjet mbeten te SL",
                                 None)

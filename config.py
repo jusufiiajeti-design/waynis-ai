@@ -46,6 +46,11 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
 WALL_LOCK_ENABLED = True
 WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
+# 🎯 Kufiri MINIMAL për t'u kyçur nga muri: muri NUK prek mikro-fitime
+# (+$0.01..+$0.30) sepse tarifat ($0.18) i kthejnë në humbje neto.
+# Kyç vetëm fitime reale: të paktën 0.5% e vlerës së pozicionit ose $0.50.
+WALL_MIN_LOCK_USD = 0.50
+WALL_MIN_LOCK_PCT = 0.005
 COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
