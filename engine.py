@@ -945,9 +945,11 @@ class PaperEngine:
 
     async def check_wall(self):
         """🧱 KONTROLLI I MURIT — thirret çdo cikël:
-        - Ngre murin nëse equity është në nivel të ri maksimal
-        - Nëse equity bie NËN murin, mbyll pozicionet menjëherë
-          (muri është i pathyeshëm — fitimi i kyçur nuk humbet kurrë)"""
+        - Ngre murin nëse equity është në nivel të ri maksimal (kyç fitimin)
+        - Kur equity bie nën murin: NUK i mbyll pozicionet drejt humbjes!
+          Vetëm KYÇ pozicionet që janë NË FITIM tani (fitimi i tyre shtohet
+          në mur); pozicionet me humbje i lë te SL e tyre natyral.
+          → muri vepron GJITHMONË drejt fitimit, kurrë drejt humbjes."""
         if not WALL_LOCK_ENABLED or not getattr(self, "wall_floor", 0):
             return False
         try:
@@ -955,13 +957,21 @@ class PaperEngine:
             eq = acc.get("equity", acc.get("balance", 0.0))
             self._raise_wall(eq)
             if eq < self.wall_floor:
-                n = await self._close_all("wall")
+                pos = self.open_positions()
+                n = 0
+                for p in pos:
+                    # 💚 vetëm pozicionet NË FITIM kyçen (drejt fitimit)
+                    if p.get("pnl", 0) > 0:
+                        price = p.get("price") or p["entry"]
+                        await self._close_trade(p, price, "wall")
+                        n += 1
                 if n:
                     self._event("wall",
-                                f"🧱 MURI U AKTIVUA: equity ra nën ${self.wall_floor:.0f} "
-                                f"→ u mbyllën {n} pozicione. Fitimi i kyçur u mbrojt.",
+                                f"🧱 MURI: u kyçën {n} pozicione në fitim "
+                                f"(equity nën ${self.wall_floor:.0f}) — "
+                                f"humbjet mbeten te SL, kurrë drejt humbjes",
                                 None)
-                return True
+                return n > 0
         except Exception:
             pass
         return False
