@@ -29,6 +29,9 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
                     PROFIT_LOCK_PAUSE_MIN,
+                    WALL_LOCK_ENABLED, WALL_LOCK_STEP,
+                    COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
+                    COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
@@ -814,6 +817,11 @@ class PaperEngine:
             await self.check_profit_lock()
         except Exception:
             pass
+        # 🧱 MURI I MBROJTJES — kontrollohet çdo cikël (muri i forcuar)
+        try:
+            await self.check_wall()
+        except Exception:
+            pass
         # 📈 DCA periodic buy
         try:
             await self.dca_check()
@@ -892,9 +900,7 @@ class PaperEngine:
             with self._conn() as c:
                 bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
             if WALL_LOCK_ENABLED:
-                if bal - STARTING_BALANCE > self.wall_floor - STARTING_BALANCE:
-                    self.wall_floor = STARTING_BALANCE +                         max(0, int((bal - STARTING_BALANCE) / WALL_LOCK_STEP)) * WALL_LOCK_STEP
-                    s = _load_settings(); s["wall_floor"] = self.wall_floor; _save_settings(s)
+                self._raise_wall(bal)
             if total_pnl > 0:
                 self.asym_mult = min(COMPOUND_MAX_RISK / (STARTING_BALANCE * TRADE_RISK),
                                      self.asym_mult * COMPOUND_WIN_MULT)
@@ -910,6 +916,51 @@ class PaperEngine:
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
                     f"(tarifa ${fees:.2f})",
                     pos["symbol"])
+
+    # ------------------------------------------------------------------
+    # 🧱 MURI I MBROJTJES — version i FORCUAR
+    # ------------------------------------------------------------------
+    def _raise_wall(self, equity_value):
+        """Ngre murin në nivelin më të lartë të arritur. Përdor equity-n
+        (fitimet e pahapura përfshihen) që muri të mbrojë edhe fitimet në
+        rrugë, jo vetëm ato të mbyllura."""
+        try:
+            gain = equity_value - STARTING_BALANCE
+            if gain > self.wall_floor - STARTING_BALANCE:
+                new_floor = STARTING_BALANCE + int(gain) * 1.0
+                if new_floor > self.wall_floor:
+                    self.wall_floor = new_floor
+                    s = _load_settings(); s["wall_floor"] = self.wall_floor
+                    _save_settings(s)
+                    self._event("wall",
+                                f"🧱 MURI U NGRIT në ${self.wall_floor:.0f} — "
+                                f"fitimi i arritur u kyç, s'bien më poshtë",
+                                None)
+        except Exception:
+            pass
+
+    async def check_wall(self):
+        """🧱 KONTROLLI I MURIT — thirret çdo cikël:
+        - Ngre murin nëse equity është në nivel të ri maksimal
+        - Nëse equity bie NËN murin, mbyll pozicionet menjëherë
+          (muri është i pathyeshëm — fitimi i kyçur nuk humbet kurrë)"""
+        if not WALL_LOCK_ENABLED or not getattr(self, "wall_floor", 0):
+            return False
+        try:
+            acc = self.account()
+            eq = acc.get("equity", acc.get("balance", 0.0))
+            self._raise_wall(eq)
+            if eq < self.wall_floor:
+                n = await self._close_all("wall")
+                if n:
+                    self._event("wall",
+                                f"🧱 MURI U AKTIVUA: equity ra nën ${self.wall_floor:.0f} "
+                                f"→ u mbyllën {n} pozicione. Fitimi i kyçur u mbrojt.",
+                                None)
+                return True
+        except Exception:
+            pass
+        return False
 
     # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)
