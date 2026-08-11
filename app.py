@@ -45,11 +45,13 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimi i arritur kyçet dhe s'bien më poshtë tij.
 # KOMPONIMI: pas FITOREJE rreziku shumëzohet ×2, pas HUMBJEJE ×0.5 —
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
-WALL_LOCK_ENABLED = True
-WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
-# 🎯 RREGULLI I MURIT (sipas kërkesës së përdoruesit): muri kyç VETËM
-# pozicione me FITIM MË TË MADH SE HUMBJA — fitimi bruto duhet të kalojë
-# tarifat e mbylljes (~0.2% të pozicionit). Çdo kyçje = fitim neto, kurrë humbje.
+# 🛗 ASHENSORI I FITIMIT — zëvendësoi murin (kërkesë e përdoruesit)
+# Dyshemeja ngjitet VETËM lart me fitimin e realizuar (kat më kat, kurrë
+# nuk zbret) dhe kur equity bie nën të, ndalon VETËM tregtitë e reja —
+# NUK mbyll asnjë pozicion të hapur; fituesit vrapojnë te TP 3% lirshëm.
+ELEVATOR_ENABLED = True
+ELEVATOR_STEP = 1.0           # dyshemeja ngjitet me çdo +$1 fitim të ri
+ELEVATOR_PAUSE_MIN = 5        # nëse equity < dyshemeja: push 5 min para tregtive të reja
 COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
@@ -2630,21 +2632,6 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
-        # 🧱 MURI: nëse fitimi i pozicionit i mjafton për të mbajtur llogarinë
-        # mbi murin, mos e lër të kthehet në humbje — mbyll me fitim të vogël
-        if not hit_tp and not hit_sl and getattr(e, "wall_floor", 0) > 0:
-            try:
-                with e._conn() as c:
-                    bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
-                need = e.wall_floor - bal
-                if need > 0:
-                    pnl_now = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
-                        else (pos["entry"] - price) * pos["qty"]
-                    if pnl_now >= need:
-                        await e._close_trade(pos, price, "wall")
-                        return
-            except Exception:
-                pass
         if not hit_tp and not hit_sl:
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
@@ -2807,7 +2794,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
                     PROFIT_LOCK_PAUSE_MIN,
-                    WALL_LOCK_ENABLED, WALL_LOCK_STEP,
+                    ELEVATOR_ENABLED, ELEVATOR_STEP, ELEVATOR_PAUSE_MIN,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
@@ -2878,8 +2865,9 @@ class PaperEngine:
         # 💰 dyshemeja e fitimit në shkallë $60 (ruhet në cilësimet)
         self.profit_floor = float(settings.get("profit_floor", STARTING_BALANCE))
         self._pl_triggered = False
-        # 🧱 MURI I MBROJTJES: lexohet nga cilësimet (mbijeton rindezjet)
-        self.wall_floor = float(settings.get("wall_floor", STARTING_BALANCE))
+        # 🛗 ASHENSORI I FITIMIT: dyshemeja ngjitet vetëm lart (mbijeton rindezjet)
+        self.elevator_floor = float(settings.get("elevator_floor", STARTING_BALANCE))
+        self._elev_paused_until = 0.0
         # ⚖️ KOMPONIMI ASIMETRIK: gjendja aktuale e rrezikut
         self.asym_mult = float(settings.get("asym_mult", 1.0))
         # 📈 DCA state
@@ -3155,7 +3143,10 @@ class PaperEngine:
     # 🔒 Equity profit lock
     # ------------------------------------------------------------------
     def is_locked(self):
-        return time.time() < self.lock_until
+        # 🔒 profit-lock/equity-lock + 🛗 push i ashensorit (vetëm bllokim
+        # i tregtive të reja — pozicionet e hapura NUK preken)
+        return (time.time() < self.lock_until
+                or time.time() < getattr(self, "_elev_paused_until", 0.0))
 
     def lock_info(self):
         return {
@@ -3163,6 +3154,12 @@ class PaperEngine:
             "pct": self.equity_lock_pct,
             "locked": self.is_locked(),
             "until": self.lock_until,
+            "elevator": {
+                "enabled": bool(ELEVATOR_ENABLED),
+                "floor": getattr(self, "elevator_floor", STARTING_BALANCE),
+                "paused": time.time() < getattr(self, "_elev_paused_until", 0.0),
+                "paused_until": getattr(self, "_elev_paused_until", 0.0),
+            },
         }
 
     def set_equity_lock(self, enabled=None, pct=None):
@@ -3599,9 +3596,9 @@ class PaperEngine:
             await self.check_profit_lock()
         except Exception:
             pass
-        # 🧱 MURI I MBROJTJES — kontrollohet çdo cikël (muri i forcuar)
+        # 🛗 ASHENSORI I FITIMIT — kontrollohet çdo cikël
         try:
-            await self.check_wall()
+            await self.check_elevator()
         except Exception:
             pass
         # 📈 DCA periodic buy
@@ -3681,8 +3678,7 @@ class PaperEngine:
         try:
             with self._conn() as c:
                 bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
-            if WALL_LOCK_ENABLED:
-                self._raise_wall(bal)
+            self._raise_elevator(bal)
             if total_pnl > 0:
                 self.asym_mult = min(COMPOUND_MAX_RISK / (STARTING_BALANCE * TRADE_RISK),
                                      self.asym_mult * COMPOUND_WIN_MULT)
@@ -3700,64 +3696,40 @@ class PaperEngine:
                     pos["symbol"])
 
     # ------------------------------------------------------------------
-    # 🧱 MURI I MBROJTJES — version i FORCUAR
+    # 🛗 ASHENSORI I FITIMIT — zëvendëson murin (kërkesë e përdoruesit)
     # ------------------------------------------------------------------
-    def _raise_wall(self, equity_value):
-        """Ngre murin vetëm nga FITIMET E REALIZUARA (bilanci i mbyllur),
-        kurrë nga kulmet e përkohshme të equity — kulmi i papjekur e ngrinte
-        murin mbi realitetin dhe muri bllokohej përgjithmonë sipër bilancit,
-        duke prerë çdo pozicion në mikro-fitim (defekti i fundit)."""
+    def _raise_elevator(self, balance_value):
+        """🛗 Ashensori ngjitet VETËM lart me FITIMIN E REALIZUAR (bilanci),
+        kat më kat me çdo ELEVATOR_STEP. Kurrë nuk zbret."""
         try:
-            if equity_value > self.wall_floor:
-                new_floor = STARTING_BALANCE + int(equity_value - STARTING_BALANCE) * 1.0
-                if new_floor > self.wall_floor:
-                    self.wall_floor = new_floor
-                    s = _load_settings(); s["wall_floor"] = self.wall_floor
+            gain = balance_value - STARTING_BALANCE
+            if gain > 0 and balance_value > self.elevator_floor:
+                steps = int(gain // ELEVATOR_STEP) if ELEVATOR_STEP > 0 else int(gain)
+                new_floor = STARTING_BALANCE + steps * ELEVATOR_STEP
+                if new_floor > self.elevator_floor:
+                    self.elevator_floor = new_floor
+                    s = _load_settings(); s["elevator_floor"] = self.elevator_floor
                     _save_settings(s)
-                    self._event("wall",
-                                f"🧱 MURI U NGRIT në ${self.wall_floor:.0f} — "
-                                f"fitimi i realizuar u kyç, s'bien më poshtë",
+                    self._event("elevator",
+                                f"🛗 ASHENSORI U NGRIT në ${self.elevator_floor:.0f} — "
+                                f"niveli i ri i fitimit të arritur, s'zbret më poshtë",
                                 None)
         except Exception:
             pass
 
-    def _wall_min_lock(self, p):
-        """HUMBJA që shkakton mbyllja = tarifat e plota rrethore të pozicionit.
-        Rregulli i përdoruesit: muri kyç VETËM kur fitimi > kjo humbje,
-        kështu që çdo kyçje e murit është GJITHMONË fitim neto."""
-        try:
-            qty = p.get("qty", 0)
-            entry = p.get("entry", 0)
-            price = p.get("price") or entry
-            return (entry * qty + price * qty) * FEE_RATE
-        except Exception:
-            return 0.0
-
-    def unrealized_profit(self):
-        """Shuma e fitoreve të pozicioneve të hapura tani (për murin)."""
-        try:
-            return round(sum(p.get("pnl", 0) for p in self.open_positions()
-                             if p.get("pnl", 0) > 0), 2)
-        except Exception:
-            return 0.0
-
-    async def check_wall(self):
-        """🧱 KONTROLLI I MURIT — thirret çdo cikël:
-        1. Muri ngrihet VETËM nga bilanci (fitimet e kyçura) — jo nga kulmet
-           e equity që e bllokonin murin sipër realitetit.
-        2. 🛟 NËSE EQUITY ËSHTË NËN KAPITALIN FILLESTAR: muri NUK prek asgjë —
-           lë botin të tregtojë normalisht (TP 3% / SL 2%) për t'u rikuperuar.
-           Muri vepron GJITHMONË drejt fitimit, kurrë drejt humbjes.
-        3. Kur equity është nën murin POR MBI kapitalin fillestar: kyç vetëm
-           pozicionet me FITIM MË TË MADH SE HUMBJA — fitimi bruto duhet të
-           kalojë tarifat e mbylljes (~0.2% të pozicionit), kështu çdo kyçje
-           është fitim neto. Të tjerat shkojnë te TP. Humbjet mbeten te SL."""
-        if not WALL_LOCK_ENABLED or not getattr(self, "wall_floor", 0):
+    async def check_elevator(self):
+        """🛗 KONTROLLI I ASHENSORIT — thirret çdo cikël:
+        1. Dyshemeja ngjitet VETËM me fitimin e realizuar (bilanci) — kurrë
+           nga kulmet e përkohshme të equity.
+        2. Kur equity bie nën dyshemenë (dyshemeja > kapitali fillestar):
+           ndalohen VETËM tregtitë e reja për ELEVATOR_PAUSE_MIN — ASNJË
+           pozicion i hapur NUK mbyllët; fituesit vrapojnë te TP 3%, humbjet
+           te SL-i i tyre.
+        3. Kur equity rikthehet sipër dyshemesë → tregtimi rifillon vetë."""
+        if not ELEVATOR_ENABLED:
             return False
         try:
-            # 🔄 çmime të FRESKËTA PARA çdo vendimi — muri vendos GJITHMONË
-            # me çmime live, kurrë me last_tickers të vjetruara nga cikli i
-            # kaluar (në të kundërt vendimet bëhen mbi çmime të vjetra)
+            # 🔄 çmime të FRESKËTA para çdo vendimi (kurrë të vjetruara)
             try:
                 fresh = await self.market.fetch_all_tickers()
                 if fresh:
@@ -3767,38 +3739,22 @@ class PaperEngine:
             acc = self.account()
             eq = acc.get("equity", acc.get("balance", 0.0))
             bal = acc.get("balance", eq)
-            # 🧱 muri ngrihet nga bilanci real (fitime të kyçura), kurrë nga
-            # kulmet e përkohshme të equity
-            self._raise_wall(bal)
-            if eq < self.wall_floor:
-                # 🛟 NËN KAPITALIN FILLESTAR → RIPËRDORIM: s'mbyll asgjë,
-                # boti tregton lirshëm që të rikuperojë (TP punon sërish)
-                if eq < STARTING_BALANCE:
-                    return False
-                pos = self.open_positions()
-                n = 0
-                locked_usd = 0.0
-                for p in pos:
-                    # 💚 kyç vetëm kur FITIMI > HUMBJA (tarifat e mbylljes) —
-                    # çdo kyçje e murit është fitim neto; të tjerat → TP 3%
-                    pnl = p.get("pnl", 0)
-                    if pnl > 0 and pnl > self._wall_min_lock(p):
-                        price = p.get("price") or p["entry"]
-                        await self._close_trade(p, price, "wall")
-                        n += 1
-                        locked_usd += pnl
-                if n:
-                    self._event("wall",
-                                f"🧱 MURI: u kyçën {n} pozicione në fitim real "
-                                f"(+${locked_usd:.2f} gjithsej) — equity nën "
-                                f"${self.wall_floor:.0f}, humbjet mbeten te SL",
+            # 🛗 dyshemeja ngrihet nga bilanci real (fitime të kyçura)
+            self._raise_elevator(bal)
+            if eq < self.elevator_floor and self.elevator_floor > STARTING_BALANCE:
+                if time.time() >= self._elev_paused_until:
+                    self._elev_paused_until = time.time() + ELEVATOR_PAUSE_MIN * 60
+                    self._event("elevator",
+                                f"🛗 ASHENSORI: equity ra nën dyshemenë "
+                                f"${self.elevator_floor:.0f} → push {ELEVATOR_PAUSE_MIN} min "
+                                f"para tregtive të reja. Pozicionet e hapura NUK preken.",
                                 None)
-                return n > 0
+                    self._set_pipeline(0, "Elevator", "🛗 Ashensori: push i përkohshëm")
+                return True
+            return False
         except Exception:
-            pass
-        return False
+            return False
 
-    # ------------------------------------------------------------------
     # REAL-money order management (spot, LONG-only)
     # ------------------------------------------------------------------
     async def real_open(self, sig, qty):

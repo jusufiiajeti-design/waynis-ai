@@ -1,12 +1,14 @@
-"""Test i MURIT — rregulli i ri: muri kyç VETËM kur fitimi > humbja (tarifat rrethore).
-Çdo kyçje e murit duhet të jetë fitim neto, kurrë humbje."""
+"""Test i ASHENSORIT — zëvendëson murin:
+- Dyshemeja ngjitet VETËM me bilancin e realizuar (kat më kat, kurrë nuk zbret)
+- Kur equity < dyshemeja (mbi fillestar): push VETËM për tregtitë e reja
+- ASNJË pozicion i hapur NUK mbyllët nga ashensori — fituesit shkojnë te TP"""
 import os, sys, asyncio, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 import engine as eng
 from providers import MarketData
-from config import STARTING_BALANCE, FEE_RATE
+from config import STARTING_BALANCE
 
 tmpdir = tempfile.mkdtemp()
 eng.DB_PATH = os.path.join(tmpdir, "test.db")
@@ -37,81 +39,82 @@ async def main():
     mkt.fetch_all_tickers = fake_tickers
     closed = []
     async def fake_close(pos, price, reason):
-        closed.append((pos["symbol"], pos["pnl"], reason))
+        closed.append((pos["symbol"], reason))
     e._close_trade = fake_close
 
     fails = []
 
-    # ===== A: eq nen fillestar => RIPERDORIM, asgje nuk preket
+    # ===== A: ashensori NUK mbyll kurrë pozicione (thelbësor!)
     closed.clear(); TICKERS.clear()
-    e.wall_floor = STARTING_BALANCE
-    seed(STARTING_BALANCE - 12.0, [(1, "XLM-USDT", "SHORT", 0.1610, 564.0, 0.156, 0.164)])
-    TICKERS["XLM-USDT"] = {"price": 0.16086}   # +$0.079 fitim bruto
-    await e.check_wall()
+    e.elevator_floor = 10005.0
+    e._elev_paused_until = 0.0
+    seed(10002.0, [
+        (1, "BNB-USDT", "LONG", 609.0, 0.15, 627.0, 596.0),   # +$1.50 fitim
+        (2, "BTC-USDT", "LONG", 64000.0, 0.01, 66000.0, 63000.0), # -$10 humbje
+    ])
+    TICKERS["BNB-USDT"] = {"price": 619.0}
+    TICKERS["BTC-USDT"] = {"price": 63000.0}
+    await e.check_elevator()
     ok = len(closed) == 0
-    print(f"A) eq 9988 < fillestar: asnje mbyllje? {'OK' if ok else 'DEFEKT: '+str(closed)}")
+    print(f"A) ashensori s'mbyll asnjë pozicion (fitues e humbës)? {'OK' if ok else 'DEFEKT: '+str(closed)}")
     if not ok: fails.append("A")
 
-    # ===== B: eq mbi fillestar, nen mur => kyç vetem kur fitim > tarifa
-    closed.clear(); TICKERS.clear()
-    e.wall_floor = 10034.0
-    # XLM: entry 0.1610, qty 564 -> tarifat = (0.161*564 + price*564)*0.001 ~ $0.182
-    # BNB: entry 609, qty 0.15 -> tarifat = (609*0.15 + 619*0.15)*0.001 = $0.184
-    seed(10020.0, [
-        (1, "XLM-USDT", "SHORT", 0.1610, 564.0, 0.156, 0.164),   # +$0.18 FITIM == tarifa -> JO (jo me i madh)
-        (2, "BNB-USDT",  "LONG",  609.0,  0.15,  627.0, 596.0),  # +$1.50 >> $0.184 -> KYÇET
-        (3, "BTC-USDT",  "LONG", 64000.0, 0.01, 66000.0, 63000.0),# humbje -> s'preket
-    ])
-    TICKERS["XLM-USDT"] = {"price": 0.160681}  # (0.1610-0.160681)*564 = +$0.18
-    TICKERS["BNB-USDT"] = {"price": 619.0}     # (619-609)*0.15 = +$1.50
-    TICKERS["BTC-USDT"] = {"price": 63000.0}   # -$10
-    await e.check_wall()
-    got = sorted((s, p) for s, p, r in closed)
-    exp = [("BNB-USDT", 1.5)]
-    ok = got == exp
-    print(f"B) +$1.50 kyçet; +$0.18 (== tarifa) jo; -$10 jo? {'OK' if ok else 'DEFEKT: '+str(got)}")
+    # ===== B: equity < dyshemeja (mbi fillestar) -> pause i tregtive te reja
+    e._elev_paused_until = 0.0
+    TICKERS.clear()
+    seed(10002.0, [])
+    TICKERS["BNB-USDT"] = {"price": 619.0}   # eq = 10002 (s'ka pozicione) < 10005
+    await e.check_elevator()
+    ok = e.is_locked() and e._elev_paused_until > 0
+    print(f"B) eq 10002 < dyshemeja 10005: pause i hyrjeve? {'OK' if ok else 'DEFEKT'}")
     if not ok: fails.append("B")
 
-    # ===== C: fitim pak mbi tarifa -> kyçet dhe eshte neto pozitiv
-    closed.clear(); TICKERS.clear()
-    e.wall_floor = 10010.0
-    seed(10005.0, [(1, "BNB-USDT", "LONG", 609.0, 0.15, 627.0, 596.0)])
-    TICKERS["BNB-USDT"] = {"price": 611.0}   # +$0.30; tarifat=(609*0.15+611*0.15)*0.001=$0.183 -> 0.30 > 0.183 KYÇET
-    await e.check_wall()
-    ok = len(closed) == 1 and closed[0][1] > 0
-    print(f"C) +$0.30 > tarifat $0.183: kyçet, neto +$0.12? {'OK' if ok else 'DEFEKT: '+str(closed)}")
+    # ===== C: pasi equity rikthehet >= dyshemeja -> lirohet (por vetem pas pause-it)
+    # eq >= dyshemeja -> ashensori nuk e mban paused
+    e._elev_paused_until = 0.0
+    TICKERS.clear()
+    seed(10006.0, [])
+    await e.check_elevator()
+    ok = not e.is_locked()
+    print(f"C) eq 10006 >= dyshemeja: s'ka pause? {'OK' if ok else 'DEFEKT'}")
     if not ok: fails.append("C")
 
-    # ===== D: fitim nën tarifa -> NUK kyçet (asnje churn)
-    closed.clear(); TICKERS.clear()
-    e.wall_floor = 10010.0
-    seed(10005.0, [(1, "BNB-USDT", "LONG", 609.0, 0.15, 627.0, 596.0)])
-    TICKERS["BNB-USDT"] = {"price": 610.6}   # +$0.24 < $0.183? jo: 0.24 > 0.183... provo 610.0: +$0.15
-    TICKERS["BNB-USDT"] = {"price": 610.0}   # +$0.15 < tarifat $0.183 -> JO
-    await e.check_wall()
-    ok = len(closed) == 0
-    print(f"D) +$0.15 < tarifat $0.183: NUK kyçet (pa churn)? {'OK' if ok else 'DEFEKT: '+str(closed)}")
-    if not ok: fails.append("D")
-
-    # ===== E: muri ngrihet vetem nga bilanci (jo nga kulmi i equity)
-    closed.clear(); TICKERS.clear()
-    e.wall_floor = 10000.0
+    # ===== D: dyshemeja ngrihet VETËM nga bilanci i realizuar (jo nga kulmi i equity)
+    e.elevator_floor = 10000.0
+    e._elev_paused_until = 0.0
+    TICKERS.clear()
     seed(9999.0, [(1, "BTC-USDT", "LONG", 64000.0, 0.01, 66000.0, 63000.0)])
-    TICKERS["BTC-USDT"] = {"price": 66099.0}   # +$10.99 unreal
-    await e.check_wall()
-    ok = e.wall_floor == 10000.0
-    print(f"E) bilanci 9999: muri qendron 10000? {'OK' if ok else 'DEFEKT: '+str(e.wall_floor)}")
+    TICKERS["BTC-USDT"] = {"price": 66099.0}   # +$10.99 unreal, eq 10009.99
+    await e.check_elevator()
+    ok = e.elevator_floor == 10000.0
+    print(f"D) bilanci 9999 (eq 10010 me unreal): dyshemeja qendron 10000? {'OK' if ok else 'DEFEKT: '+str(e.elevator_floor)}")
+    if not ok: fails.append("D")
+    # D2: pasi bilanci kalon 10001 -> dyshemeja ngrihet
+    seed(10002.0, []); TICKERS.clear()
+    await e.check_elevator()
+    ok = e.elevator_floor == 10002.0
+    print(f"D2) bilanci 10002 -> dyshemeja 10002? {'OK' if ok else 'DEFEKT: '+str(e.elevator_floor)}")
+    if not ok: fails.append("D2")
+
+    # ===== E: eq < fillestar -> asnjë pause (rikuperim i plotë)
+    e.elevator_floor = 10000.0
+    e._elev_paused_until = 0.0
+    TICKERS.clear()
+    seed(9988.0, [(1, "XLM-USDT", "SHORT", 0.1610, 564.0, 0.156, 0.164)])
+    TICKERS["XLM-USDT"] = {"price": 0.16086}   # +$0.08, eq 9988.08 < 10000
+    await e.check_elevator()
+    ok = not e.is_locked()
+    print(f"E) eq 9988 < fillestar: s'ka pause (rikuperim)? {'OK' if ok else 'DEFEKT'}")
     if not ok: fails.append("E")
 
-    # ===== F: fitim i madh me pozicion te vogel => kufiri varet nga madhesia
-    closed.clear(); TICKERS.clear()
-    e.wall_floor = 10010.0
-    # pozicion i vogel: qty 0.02 BTC @ 64000 = $1280 notional, tarifat ~$0.256
-    seed(10005.0, [(1, "BTC-USDT", "LONG", 64000.0, 0.02, 66000.0, 63000.0)])
-    TICKERS["BTC-USDT"] = {"price": 64008.0}   # +$0.16 < tarifat $0.256 -> JO
-    await e.check_wall()
-    ok = len(closed) == 0
-    print(f"F) +$0.16 < tarifat $0.256 (poz i madh): NUK kyçet? {'OK' if ok else 'DEFEKT: '+str(closed)}")
+    # ===== F: dyshemeja ngjitet "kat më kat" — bllokohet vetëm në hapat $1
+    e.elevator_floor = 10000.0
+    e._elev_paused_until = 0.0
+    seed(10000.4, [])   # +$0.40 fitim — ende nën hapin $1
+    TICKERS.clear()
+    await e.check_elevator()
+    ok = e.elevator_floor == 10000.0
+    print(f"F) bilanci 10000.40 (< +$1): dyshemeja qendron 10000? {'OK' if ok else 'DEFEKT: '+str(e.elevator_floor)}")
     if not ok: fails.append("F")
 
     print("\n" + ("✅ TË GJITHA TESTET KALUAN" if not fails else f"❌ DEFEKT në: {fails}"))

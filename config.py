@@ -44,11 +44,13 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimi i arritur kyçet dhe s'bien më poshtë tij.
 # KOMPONIMI: pas FITOREJE rreziku shumëzohet ×2, pas HUMBJEJE ×0.5 —
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
-WALL_LOCK_ENABLED = True
-WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
-# 🎯 RREGULLI I MURIT (sipas kërkesës së përdoruesit): muri kyç VETËM
-# pozicione me FITIM MË TË MADH SE HUMBJA — fitimi bruto duhet të kalojë
-# tarifat e mbylljes (~0.2% të pozicionit). Çdo kyçje = fitim neto, kurrë humbje.
+# 🛗 ASHENSORI I FITIMIT — zëvendësoi murin (kërkesë e përdoruesit)
+# Dyshemeja ngjitet VETËM lart me fitimin e realizuar (kat më kat, kurrë
+# nuk zbret) dhe kur equity bie nën të, ndalon VETËM tregtitë e reja —
+# NUK mbyll asnjë pozicion të hapur; fituesit vrapojnë te TP 3% lirshëm.
+ELEVATOR_ENABLED = True
+ELEVATOR_STEP = 1.0           # dyshemeja ngjitet me çdo +$1 fitim të ri
+ELEVATOR_PAUSE_MIN = 5        # nëse equity < dyshemeja: push 5 min para tregtive të reja
 COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
