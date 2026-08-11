@@ -46,8 +46,8 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
 WALL_LOCK_ENABLED = True
 WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
-COMPOUND_WIN_MULT = 2.0       # ×2 pas fitoreje
-COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje
+COMPOUND_WIN_MULT = 1.3       # ×1.3 pas fitoreje (i butë — i testuar më i sigurt)
+COMPOUND_LOSS_MULT = 0.8      # ×0.8 pas humbjeje (i butë — nuk përforcon humbjet)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
 COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
 
