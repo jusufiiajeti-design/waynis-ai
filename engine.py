@@ -30,7 +30,6 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
                     PROFIT_LOCK_PAUSE_MIN,
                     WALL_LOCK_ENABLED, WALL_LOCK_STEP,
-                    WALL_MIN_LOCK_USD, WALL_MIN_LOCK_PCT,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
@@ -945,13 +944,16 @@ class PaperEngine:
             pass
 
     def _wall_min_lock(self, p):
-        """Fitimi minimal që muri e konsideron 'të denjë për kyçje'.
-        Mikro-fitime nuk kyçen (tarifat i bëjnë humbje neto)."""
+        """HUMBJA që shkakton mbyllja = tarifat e plota rrethore të pozicionit.
+        Rregulli i përdoruesit: muri kyç VETËM kur fitimi > kjo humbje,
+        kështu që çdo kyçje e murit është GJITHMONË fitim neto."""
         try:
-            notional = p.get("entry", 0) * p.get("qty", 0)
-            return max(WALL_MIN_LOCK_USD, notional * WALL_MIN_LOCK_PCT)
+            qty = p.get("qty", 0)
+            entry = p.get("entry", 0)
+            price = p.get("price") or entry
+            return (entry * qty + price * qty) * FEE_RATE
         except Exception:
-            return WALL_MIN_LOCK_USD
+            return 0.0
 
     def unrealized_profit(self):
         """Shuma e fitoreve të pozicioneve të hapura tani (për murin)."""
@@ -969,8 +971,9 @@ class PaperEngine:
            lë botin të tregtojë normalisht (TP 3% / SL 2%) për t'u rikuperuar.
            Muri vepron GJITHMONË drejt fitimit, kurrë drejt humbjes.
         3. Kur equity është nën murin POR MBI kapitalin fillestar: kyç vetëm
-           pozicionet me FITIM REAL (≥ 0.5% ose ≥ $0.50); mikro-fitimet i lë
-           të shkojnë te TP. Humbjet mbeten gjithmonë te SL-i i tyre."""
+           pozicionet me FITIM MË TË MADH SE HUMBJA — fitimi bruto duhet të
+           kalojë tarifat e mbylljes (~0.2% të pozicionit), kështu çdo kyçje
+           është fitim neto. Të tjerat shkojnë te TP. Humbjet mbeten te SL."""
         if not WALL_LOCK_ENABLED or not getattr(self, "wall_floor", 0):
             return False
         try:
@@ -998,10 +1001,10 @@ class PaperEngine:
                 n = 0
                 locked_usd = 0.0
                 for p in pos:
-                    # 💚 kyç vetëm FITIMET REALE — mikro-fitimet (+$0.01..)
-                    # i lë të shkojnë te TP 3%; tarifat i bëjnë humbje neto
+                    # 💚 kyç vetëm kur FITIMI > HUMBJA (tarifat e mbylljes) —
+                    # çdo kyçje e murit është fitim neto; të tjerat → TP 3%
                     pnl = p.get("pnl", 0)
-                    if pnl > 0 and pnl >= self._wall_min_lock(p):
+                    if pnl > 0 and pnl > self._wall_min_lock(p):
                         price = p.get("price") or p["entry"]
                         await self._close_trade(p, price, "wall")
                         n += 1
