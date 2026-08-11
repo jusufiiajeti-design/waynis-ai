@@ -3720,6 +3720,14 @@ class PaperEngine:
         except Exception:
             pass
 
+    def unrealized_profit(self):
+        """Shuma e fitoreve të pozicioneve të hapura tani (për murin)."""
+        try:
+            return round(sum(p.get("pnl", 0) for p in self.open_positions()
+                             if p.get("pnl", 0) > 0), 2)
+        except Exception:
+            return 0.0
+
     async def check_wall(self):
         """🧱 KONTROLLI I MURIT — thirret çdo cikël:
         - Ngre murin nëse equity është në nivel të ri maksimal (kyç fitimin)
@@ -3732,21 +3740,33 @@ class PaperEngine:
         try:
             acc = self.account()
             eq = acc.get("equity", acc.get("balance", 0.0))
-            self._raise_wall(eq)
+            # 🧱 muri ngrihet edhe nga fitoret e hapura (para se të kyçen)
+            self._raise_wall(eq + self.unrealized_profit())
             if eq < self.wall_floor:
+                # 🔄 çmime të FRESKËTA për të gjitha pozicionet (muri thirret
+                # para Scanner-it — pa këtë, pnl llogaritet me çmime të vjetra
+                # dhe shumë fitore nuk shihen → kyçej vetëm 1 pozicion)
+                try:
+                    fresh = await self.market.fetch_all_tickers()
+                    if fresh:
+                        self.last_tickers = fresh
+                except Exception:
+                    pass
                 pos = self.open_positions()
                 n = 0
+                locked_usd = 0.0
                 for p in pos:
-                    # 💚 vetëm pozicionet NË FITIM kyçen (drejt fitimit)
+                    # 💚 kyç TË GJITHA pozicionet NË FITIM (jo vetëm një!)
                     if p.get("pnl", 0) > 0:
                         price = p.get("price") or p["entry"]
                         await self._close_trade(p, price, "wall")
                         n += 1
+                        locked_usd += p.get("pnl", 0)
                 if n:
                     self._event("wall",
                                 f"🧱 MURI: u kyçën {n} pozicione në fitim "
-                                f"(equity nën ${self.wall_floor:.0f}) — "
-                                f"humbjet mbeten te SL, kurrë drejt humbjes",
+                                f"(+${locked_usd:.2f} gjithsej) — equity nën "
+                                f"${self.wall_floor:.0f}, humbjet mbeten te SL",
                                 None)
                 return n > 0
         except Exception:
