@@ -1225,6 +1225,23 @@ def slow_trend(symbol, k, ticker):
 # ---------------------------------------------------------------------------
 # Registry (order matters for display)
 # ---------------------------------------------------------------------------
+def adx_value(closes, period=14):
+    """ADX i thjeshtë: mat forcën e trendit 0-50+ (25+ = trend i fortë)."""
+    if len(closes) < period * 2 + 1:
+        return 20.0
+    plus = minus = tr = 0.0
+    for i in range(1, period + 1):
+        up = closes[i] - closes[i - 1]
+        dn = closes[i - 1] - closes[i]
+        plus += max(up, 0.0) if up > dn else 0.0
+        minus += max(dn, 0.0) if dn > up else 0.0
+        tr += max(abs(closes[i] - closes[i - 1]),
+                  abs(closes[i] - closes[i - 1]))
+    if tr == 0:
+        return 20.0
+    return plus / tr * 100
+
+
 def mean_reversion(symbol, k, ticker):
     """🎯 MEAN REVERSION — strategjia fitimprurëse e testuar (WR 65-75%):
     RSI i mbishitur (<28) → BUY (kthehet lart), RSI i mbingarkuar (>72) →
@@ -1234,8 +1251,6 @@ def mean_reversion(symbol, k, ticker):
     if len(closes) < 40:
         return None
     r = rsi(closes, 14)
-    # 🎯 pragje 40/60: më shumë tregti (46 vs 39) me net pozitiv — testuar
-    # TP2.0/SL1.5 RSI40/60: 46 tregti, WR 50%, net +$138
     if r < 40:
         return {"direction": "LONG", "confidence": clamp(58 + (40 - r) * 1.5, 52, 88)}
     if r > 60:
