@@ -4,9 +4,9 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
-TRADE_RISK = 0.0025             # ~$25 risk SL/tregti me $10k (0.25%) — zgjedhja e përdoruesit
-                                 # (risk25): fitimi TP ~$31.9, net ~$8/tregti → ~$120-500/ditë
-                                 # ⚠️ RREZIK: 10 humbje radhazi = -$250 (2.5% e llogarisë)
+TRADE_RISK = 0.0008             # ~$8 risk SL/tregti me $10k (0.08%) — OPTIMALI PËR $60/DITË
+                                 # (llogaritur): net ~$2.55/tregti → ~$38/ditë (15 tregti),
+                                 # ~$64/ditë (25 tregti). Rrezik i arsyeshëm: 10 humbje = -$80
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
                                  # net +$396 (25 monedha), +$6.95/tregti → ~$56/ditë
 STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
