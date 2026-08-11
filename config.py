@@ -39,6 +39,18 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 🧱 MURI I MBROJTJES + KOMPONIMI ASIMETRIK (kërkesa e përdoruesit) ----
+# MURI: pas çdo fitimi që shkon në plus, dyshemeja ngrihet në atë nivel —
+# fitimi i arritur kyçet dhe s'bien më poshtë tij.
+# KOMPONIMI: pas FITOREJE rreziku shumëzohet ×2, pas HUMBJEJE ×0.5 —
+# fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
+WALL_LOCK_ENABLED = True
+WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
+COMPOUND_WIN_MULT = 2.0       # ×2 pas fitoreje
+COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje
+COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
+COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
+
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
 # nivel bëhet DYSHEME: nëse equity bie nën të, mbyllen të gjitha pozicionet

@@ -887,6 +887,23 @@ class PaperEngine:
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
         self._turso_push_snapshot()      # ☁️ fitimi i kyçur ruhet
+        # 🧱 MURI + ⚖️ KOMPONIMI ASIMETRIK pas çdo tregtie të mbyllur
+        try:
+            with self._conn() as c:
+                bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+            if WALL_LOCK_ENABLED:
+                if bal - STARTING_BALANCE > self.wall_floor - STARTING_BALANCE:
+                    self.wall_floor = STARTING_BALANCE +                         max(0, int((bal - STARTING_BALANCE) / WALL_LOCK_STEP)) * WALL_LOCK_STEP
+                    s = _load_settings(); s["wall_floor"] = self.wall_floor; _save_settings(s)
+            if total_pnl > 0:
+                self.asym_mult = min(COMPOUND_MAX_RISK / (STARTING_BALANCE * TRADE_RISK),
+                                     self.asym_mult * COMPOUND_WIN_MULT)
+            else:
+                self.asym_mult = max(COMPOUND_MIN_RISK / (STARTING_BALANCE * TRADE_RISK),
+                                     self.asym_mult * COMPOUND_LOSS_MULT)
+            s = _load_settings(); s["asym_mult"] = self.asym_mult; _save_settings(s)
+        except Exception:
+            pass
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "

@@ -867,7 +867,7 @@ class SizerAgent(Agent):
             sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
                 else entry * (1 + STOP_LOSS)
         stop_dist = abs(entry - sl)
-        risk_amount = base * TRADE_RISK
+        risk_amount = base * TRADE_RISK * getattr(e, "asym_mult", 1.0)   # ⚖️ ×2 fitore / ×0.5 humbje
         # 🎯 HUMBJA TOTALE = $2 (kërkesa e përdoruesit): SL ($risk_amount)
         # + tarifat (0.1% hyrje + 0.1% dalje mbi notional). Llogarisim qty
         # që të plotësojë:  qty*stop_dist + qty*entry*2*FEE_RATE <= risk_total
@@ -1003,6 +1003,21 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        # 🧱 MURI: nëse fitimi i pozicionit i mjafton për të mbajtur llogarinë
+        # mbi murin, mos e lër të kthehet në humbje — mbyll me fitim të vogël
+        if not hit_tp and not hit_sl and getattr(e, "wall_floor", 0) > 0:
+            try:
+                with e._conn() as c:
+                    bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+                need = e.wall_floor - bal
+                if need > 0:
+                    pnl_now = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
+                        else (pos["entry"] - price) * pos["qty"]
+                    if pnl_now >= need:
+                        await e._close_trade(pos, price, "wall")
+                        return
+            except Exception:
+                pass
         if not hit_tp and not hit_sl:
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë

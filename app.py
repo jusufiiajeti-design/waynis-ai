@@ -40,6 +40,18 @@ EQUITY_LOCK_ENABLED = True
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
+# ---- 🧱 MURI I MBROJTJES + KOMPONIMI ASIMETRIK (kërkesa e përdoruesit) ----
+# MURI: pas çdo fitimi që shkon në plus, dyshemeja ngrihet në atë nivel —
+# fitimi i arritur kyçet dhe s'bien më poshtë tij.
+# KOMPONIMI: pas FITOREJE rreziku shumëzohet ×2, pas HUMBJEJE ×0.5 —
+# fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
+WALL_LOCK_ENABLED = True
+WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
+COMPOUND_WIN_MULT = 2.0       # ×2 pas fitoreje
+COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje
+COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
+COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
+
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
 # nivel bëhet DYSHEME: nëse equity bie nën të, mbyllen të gjitha pozicionet
@@ -2466,7 +2478,7 @@ class SizerAgent(Agent):
             sl = entry * (1 - STOP_LOSS) if sig["direction"] == "LONG" \
                 else entry * (1 + STOP_LOSS)
         stop_dist = abs(entry - sl)
-        risk_amount = base * TRADE_RISK
+        risk_amount = base * TRADE_RISK * getattr(e, "asym_mult", 1.0)   # ⚖️ ×2 fitore / ×0.5 humbje
         # 🎯 HUMBJA TOTALE = $2 (kërkesa e përdoruesit): SL ($risk_amount)
         # + tarifat (0.1% hyrje + 0.1% dalje mbi notional). Llogarisim qty
         # që të plotësojë:  qty*stop_dist + qty*entry*2*FEE_RATE <= risk_total
@@ -2602,6 +2614,21 @@ class TrackerAgent(Agent):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
+        # 🧱 MURI: nëse fitimi i pozicionit i mjafton për të mbajtur llogarinë
+        # mbi murin, mos e lër të kthehet në humbje — mbyll me fitim të vogël
+        if not hit_tp and not hit_sl and getattr(e, "wall_floor", 0) > 0:
+            try:
+                with e._conn() as c:
+                    bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+                need = e.wall_floor - bal
+                if need > 0:
+                    pnl_now = (price - pos["entry"]) * pos["qty"] if side == "LONG" \
+                        else (pos["entry"] - price) * pos["qty"]
+                    if pnl_now >= need:
+                        await e._close_trade(pos, price, "wall")
+                        return
+            except Exception:
+                pass
         if not hit_tp and not hit_sl:
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
@@ -3622,6 +3649,23 @@ class PaperEngine:
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
         self._turso_push_snapshot()      # ☁️ fitimi i kyçur ruhet
+        # 🧱 MURI + ⚖️ KOMPONIMI ASIMETRIK pas çdo tregtie të mbyllur
+        try:
+            with self._conn() as c:
+                bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+            if WALL_LOCK_ENABLED:
+                if bal - STARTING_BALANCE > self.wall_floor - STARTING_BALANCE:
+                    self.wall_floor = STARTING_BALANCE +                         max(0, int((bal - STARTING_BALANCE) / WALL_LOCK_STEP)) * WALL_LOCK_STEP
+                    s = _load_settings(); s["wall_floor"] = self.wall_floor; _save_settings(s)
+            if total_pnl > 0:
+                self.asym_mult = min(COMPOUND_MAX_RISK / (STARTING_BALANCE * TRADE_RISK),
+                                     self.asym_mult * COMPOUND_WIN_MULT)
+            else:
+                self.asym_mult = max(COMPOUND_MIN_RISK / (STARTING_BALANCE * TRADE_RISK),
+                                     self.asym_mult * COMPOUND_LOSS_MULT)
+            s = _load_settings(); s["asym_mult"] = self.asym_mult; _save_settings(s)
+        except Exception:
+            pass
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
