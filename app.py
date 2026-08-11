@@ -4,9 +4,9 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
-TRADE_RISK = 0.0008             # ~$8 risk SL/tregti me $10k (0.08%) — OPTIMALI PËR $60/DITË
-                                 # (llogaritur): net ~$2.55/tregti → ~$38/ditë (15 tregti),
-                                 # ~$64/ditë (25 tregti). Rrezik i arsyeshëm: 10 humbje = -$80
+TRADE_RISK = 0.0012             # ~$12 risk SL/tregti me $10k (0.12%) — AGRESIV I MBROJTUR
+                                 # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
+                                 # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
                                  # net +$396 (25 monedha), +$6.95/tregti → ~$56/ditë
 STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
@@ -47,8 +47,8 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
 WALL_LOCK_ENABLED = True
 WALL_LOCK_STEP = 1.0          # ngre murin me çdo +$1 fitim të ri
-COMPOUND_WIN_MULT = 1.3       # ×1.3 pas fitoreje (i butë — i testuar më i sigurt)
-COMPOUND_LOSS_MULT = 0.8      # ×0.8 pas humbjeje (i butë — nuk përforcon humbjet)
+COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
+COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
 COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
 
