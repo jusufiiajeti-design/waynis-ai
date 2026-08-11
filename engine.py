@@ -100,6 +100,10 @@ class PaperEngine:
         # 💰 dyshemeja e fitimit në shkallë $60 (ruhet në cilësimet)
         self.profit_floor = float(settings.get("profit_floor", STARTING_BALANCE))
         self._pl_triggered = False
+        # 🧱 MURI I MBROJTJES: lexohet nga cilësimet (mbijeton rindezjet)
+        self.wall_floor = float(settings.get("wall_floor", STARTING_BALANCE))
+        # ⚖️ KOMPONIMI ASIMETRIK: gjendja aktuale e rrezikut
+        self.asym_mult = float(settings.get("asym_mult", 1.0))
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
