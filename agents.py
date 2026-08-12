@@ -39,7 +39,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
-                    COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE,
+                    COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE, GOAL_BALANCE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -753,6 +753,8 @@ GROUPS = [
      "role": "Validator + Risk Manager", "members": ["Validator", "Risk"]},
     {"id": "exec",   "icon": "⚖️", "name": "Ekzekutimi",
      "role": "Sizer + Filler + Tracker + Learning", "members": ["Sizer", "Filler", "Tracker", "Learning"]},
+    {"id": "goal",   "icon": "💰", "name": "Synimi $1M",
+     "role": "Progresi real drejt 1 milion", "members": ["Milioneri"]},
 ]
 GROUP_BY_NAME = {}
 for _g in GROUPS:
@@ -1156,8 +1158,47 @@ class LearningAgent(Agent):
 # ======================================================================
 # ALL 20 AGENTS (order = execution order)
 # ======================================================================
+# ======================================================================
+# 💰 MILIONERI — AGJENTI I SYNIMIT $1M (kërkesë e përdoruesit)
+# Monitoron rrugën REALE drejt $1,000,000 me numra të vërtetë nga llogaria:
+#  • mat progresin % drejt synimit
+#  • shënon nivelet e arritura (+$100) si ngjarje "goal"
+#  • paralajmëron kur rruga kërcënohet (bilanci nën kapitalin fillestar)
+# NUK sajon asnjë shifër — çdo numër është i vërtetë nga llogaria.
+# ======================================================================
+class MilioneriAgent(Agent):
+    step, name, icon = 2, "Milioneri", "💰"
+    role = "Agjenti i synimit $1M: mat progresin real, shënon nivelet, paralajmëron rreziqet"
+
+    async def execute(self, ctx, idx):
+        e = self.engine
+        try:
+            acc = e.account()
+            bal = acc.get("balance", 0.0)
+            progress = bal / GOAL_BALANCE * 100.0
+            # 🏅 nivel i ri i arritur (çdo +$100 mbi kapitalin fillestar)
+            last = getattr(e, "_goal_last_rung", 0)
+            rung = int((bal - STARTING_BALANCE) // 100)
+            if rung > last:
+                e._goal_last_rung = rung
+                e._event("goal",
+                         f"💰 MILIONERI: niveli +${rung*100:.0f} i arritur — "
+                         f"{progress:.4f}% e rrugës drejt $1M. Bilanci ${bal:,.2f}",
+                         None)
+            # ⚠️ paralajmërim i sinqertë kur rruga kërcënohet
+            if bal < STARTING_BALANCE:
+                self.report(f"💰 MILIONERI: {progress:.4f}% e rrugës drejt $1M — "
+                            f"bilanci ${bal:,.2f} (nën fillestarin → rikuperim)",
+                            None, None, None)
+            else:
+                self.report(f"💰 MILIONERI: {progress:.4f}% e rrugës drejt $1M — "
+                            f"bilanci ${bal:,.2f}", None, None, None)
+        except Exception:
+            pass
+
+
 ALL_AGENTS = ([OrganizerAgent, ScannerAgent] + STRATEGY_AGENTS +
               [BrainAgent, ProbabilityAgent, ConsensusAgent, AIPredictorAgent, RegimeFilterAgent,
                ValidatorAgent, RiskManagerAgent, GroupCoordinatorAgent,
                SizerAgent,
-               FillerAgent, TrackerAgent, LearningAgent])
+               FillerAgent, TrackerAgent, LearningAgent, MilioneriAgent])
