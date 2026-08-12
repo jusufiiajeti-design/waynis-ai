@@ -2,9 +2,9 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
-CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
-SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
-TRADE_RISK = 0.0015             # ~$15 risk SL/tregti me $10k (0.15%) — HYRJE MË TË MËDHA
+CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
+SCAN_BATCH = 100                # 📡 skanon TË GJITHA monedhat çdo cikël (100)
+TRADE_RISK = 0.0020             # ~$20 risk SL/tregti me $10k (0.20%) — HYRJE TË MËDHA (kërkesë)
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -13,8 +13,8 @@ STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
-MAX_SAME_DIRECTION = 8          # 🧭 max 8 SHORT ose 8 LONG njëherësh — ndalon
+MAX_OPEN = 150                  # 150 pozicione njëkohësisht — qarkullim I MADH (kërkesë)
+MAX_SAME_DIRECTION = 12         # 🧭 max 12 SHORT ose 12 LONG njëherësh — qarkullim i madh
                                 # hapjen masive në drejtim të gabuar (sot: 27 SHORT
                                 # njëherësh → të gjitha goditën SL 2%)
 
@@ -52,7 +52,7 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
-COMPOUND_MAX_RISK = 60.0      # rreziku maksimal ($60) — hyrje më të mëdha pas fitoreve
+COMPOUND_MAX_RISK = 100.0     # rreziku maksimal ($100) — hyrje shumë të mëdha pas fitoreve
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
@@ -69,6 +69,11 @@ LOSS_STREAK_PAUSE_MIN = 30      # push 30 min (vetëm hyrjet; pozicionet e hapur
 DAILY_STOP_PCT = 0.02           # −2% e bilancit në ditë → ndalo deri nesër
 GOAL_BALANCE = 1_000_000.0      # 🎯 synimi i përdoruesit: $1,000,000 (vetëm ekran)
 COOLDOWN_SECONDS = 0.3          # ⚡ rihyrje pas 0.3s — qarkullim edhe më i shpejtë
+
+# ---- 🛡️ KUFIRI I EKSPOZIMIT TOTAL (mbrojtje për qarkullimin e madh) ----
+# Notionali i hapur nuk mund të kalojë MAX_PORTFOLIO_LEVERAGE × bilanci —
+# me 150 pozicione pa këtë, një lëvizje e fortë do ta fshinte llogarinë.
+MAX_PORTFOLIO_LEVERAGE = 6.0     # maksimumi 6× bilanci në pozicione të hapura
 
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on
@@ -1674,7 +1679,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
-                    COOLDOWN_SECONDS,
+                    COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -2248,6 +2253,21 @@ class ValidatorAgent(Agent):
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
+            # 🛡️ EKSPOZIMI TOTAL: notional i hapur ≤ 6× bilanci — me qarkullim
+            # të madh pa këtë, një lëvizje e fortë e fshin llogarinë.
+            try:
+                open_pos = e.open_positions()
+                notional_open = sum(p["entry"] * p["qty"] for p in open_pos)
+                bal = e.account()["balance"]
+                if notional_open >= MAX_PORTFOLIO_LEVERAGE * bal:
+                    self.report(f"🛡️ Ekspozimi maksimal "
+                                f"({notional_open:.0f}$ ≈ {MAX_PORTFOLIO_LEVERAGE:.0f}× bilanci) — "
+                                f"prit që të mbyllen pozicione",
+                                best["symbol"], best["direction"], best["confidence"])
+                    ctx.stop = True
+                    return
+            except Exception:
+                pass
 
         # per-symbol sanity checks (volume is handled by the strategies'
         # own filters; consensus ≥2 strategies is the main quality gate)

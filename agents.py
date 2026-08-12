@@ -39,7 +39,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
-                    COOLDOWN_SECONDS,
+                    COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -613,6 +613,21 @@ class ValidatorAgent(Agent):
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
+            # 🛡️ EKSPOZIMI TOTAL: notional i hapur ≤ 6× bilanci — me qarkullim
+            # të madh pa këtë, një lëvizje e fortë e fshin llogarinë.
+            try:
+                open_pos = e.open_positions()
+                notional_open = sum(p["entry"] * p["qty"] for p in open_pos)
+                bal = e.account()["balance"]
+                if notional_open >= MAX_PORTFOLIO_LEVERAGE * bal:
+                    self.report(f"🛡️ Ekspozimi maksimal "
+                                f"({notional_open:.0f}$ ≈ {MAX_PORTFOLIO_LEVERAGE:.0f}× bilanci) — "
+                                f"prit që të mbyllen pozicione",
+                                best["symbol"], best["direction"], best["confidence"])
+                    ctx.stop = True
+                    return
+            except Exception:
+                pass
 
         # per-symbol sanity checks (volume is handled by the strategies'
         # own filters; consensus ≥2 strategies is the main quality gate)
