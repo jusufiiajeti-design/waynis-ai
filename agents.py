@@ -38,7 +38,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -597,6 +597,18 @@ class ValidatorAgent(Agent):
         else:
             if len(e.open_positions()) >= MAX_OPEN:
                 self.report(f"Portofoli i plotë ({MAX_OPEN}/{MAX_OPEN})",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            # 🧭 KUFIZIMI I POZICIONEVE TË NJËJTA: max MAX_SAME_DIRECTION SHORT
+            # ose LONG njëherësh — ndalon hapjen masive në drejtim të gabuar
+            # (sot: 27 SHORT njëherësh → të gjitha goditën SL).
+            same_dir = sum(1 for p in e.open_positions()
+                           if p["side"] == best["direction"])
+            if same_dir >= MAX_SAME_DIRECTION:
+                self.report(f"🧭 {best['direction']} i plotë "
+                            f"({same_dir}/{MAX_SAME_DIRECTION} pozicione të njëjta) — "
+                            f"prit hapje të reja në këtë drejtim",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return

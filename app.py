@@ -14,6 +14,9 @@ STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
 MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
+MAX_SAME_DIRECTION = 8          # 🧭 max 8 SHORT ose 8 LONG njëherësh — ndalon
+                                # hapjen masive në drejtim të gabuar (sot: 27 SHORT
+                                # njëherësh → të gjitha goditën SL 2%)
 
 # ---- real money (spot, LONG-only) ----
 FEE_RATE = 0.001                # 0.1% per side (taker) — also simulated in paper
@@ -1661,7 +1664,7 @@ import time
 
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
-                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -2220,6 +2223,18 @@ class ValidatorAgent(Agent):
         else:
             if len(e.open_positions()) >= MAX_OPEN:
                 self.report(f"Portofoli i plotë ({MAX_OPEN}/{MAX_OPEN})",
+                            best["symbol"], best["direction"], best["confidence"])
+                ctx.stop = True
+                return
+            # 🧭 KUFIZIMI I POZICIONEVE TË NJËJTA: max MAX_SAME_DIRECTION SHORT
+            # ose LONG njëherësh — ndalon hapjen masive në drejtim të gabuar
+            # (sot: 27 SHORT njëherësh → të gjitha goditën SL).
+            same_dir = sum(1 for p in e.open_positions()
+                           if p["side"] == best["direction"])
+            if same_dir >= MAX_SAME_DIRECTION:
+                self.report(f"🧭 {best['direction']} i plotë "
+                            f"({same_dir}/{MAX_SAME_DIRECTION} pozicione të njëjta) — "
+                            f"prit hapje të reja në këtë drejtim",
                             best["symbol"], best["direction"], best["confidence"])
                 ctx.stop = True
                 return
