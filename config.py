@@ -35,22 +35,16 @@ REL_STRENGTH_BOOST = False      # cross-symbol relative-strength filter
 # Once the account grows to a peak, never let it give back more than
 # EQUITY_LOCK_PCT from that peak — when triggered, ALL positions close
 # and new entries pause for EQUITY_LOCK_PAUSE_MIN minutes.
-EQUITY_LOCK_ENABLED = True
+# ❌ ÇAKTIVIZUAR me kërkesë të përdoruesit — s'ka më mbrojtje që mbyll pozicione.
+EQUITY_LOCK_ENABLED = False
 EQUITY_LOCK_PCT = 0.02           # give back max 2% from peak (0.02 = 2%)
 EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 
-# ---- 🧱 MURI I MBROJTJES + KOMPONIMI ASIMETRIK (kërkesa e përdoruesit) ----
-# MURI: pas çdo fitimi që shkon në plus, dyshemeja ngrihet në atë nivel —
-# fitimi i arritur kyçet dhe s'bien më poshtë tij.
-# KOMPONIMI: pas FITOREJE rreziku shumëzohet ×2, pas HUMBJEJE ×0.5 —
-# fitimet rriten shpejt, humbjet tkurren (asimetrik, mbrojtës).
-# 🛗 ASHENSORI I FITIMIT — zëvendësoi murin (kërkesë e përdoruesit)
-# Dyshemeja ngjitet VETËM lart me fitimin e realizuar (kat më kat, kurrë
-# nuk zbret) dhe kur equity bie nën të, ndalon VETËM tregtitë e reja —
-# NUK mbyll asnjë pozicion të hapur; fituesit vrapojnë te TP 3% lirshëm.
-ELEVATOR_ENABLED = True
-ELEVATOR_STEP = 1.0           # dyshemeja ngjitet me çdo +$1 fitim të ri
-ELEVATOR_PAUSE_MIN = 5        # nëse equity < dyshemeja: push 5 min para tregtive të reja
+# ---- ⚖️ KOMPONIMI ASIMETRIK (madhësia e tregtive) ----
+# Pas FITOREJE rreziku shumëzohet ×1.8, pas HUMBJEJE ×0.5 —
+# fitimet rriten shpejt, humbjet tkurren. NUK mbyll asnjë pozicion.
+# ❌ MURI dhe 🛗 ASHENSORI u HOQËN me kërkesë të përdoruesit —
+# asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
 COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
@@ -60,7 +54,7 @@ COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
 # nivel bëhet DYSHEME: nëse equity bie nën të, mbyllen të gjitha pozicionet
 # për të mbrojtur fitimin e kyçur. Dyshemeja ngrihet vetëm lart, kurrë poshtë.
-PROFIT_LOCK_STEP_USD = 60.0      # +$60 çdo herë
+PROFIT_LOCK_STEP_USD = 0.0       # ❌ ÇAKTIVIZUAR — s'mbyll më asgjë për të 'kyçur' fitime
 PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
 
 # ---- 📈 DCA (dollar-cost averaging) mode ----

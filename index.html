@@ -470,10 +470,6 @@
         <div><div class="l">Statusi i mbrojtjes</div><div class="d">Kulmi aktual i llogarisë dhe kur ndizet</div></div>
         <div class="kbd" id="lockState">—</div>
       </div>
-      <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
-        <div><div class="l">🛗 Ashensori i fitimit</div><div class="d">Dyshemeja ngjitet vetëm lart me fitimin e realizuar — kur equity bie nën të, ndalon vetëm tregtitë e reja (s'mbyll asnjë pozicion)</div></div>
-        <div class="kbd" id="elevState">—</div>
-      </div>
       <div class="set" style="border-top:1px dashed rgba(239,68,68,.4);margin-top:6px">
         <div><div class="l" style="color:var(--red)">💰 Para reale (Real Mode)</div><div class="d">Spot · vetëm LONG · pa leverage · TP/SL në exchange</div></div>
         <div class="switch" id="swMode" onclick="toggleMode()"></div>
@@ -807,14 +803,6 @@ function renderStatus(){
   const lkEl=$("lockState");
   if(lk.locked){ lkEl.textContent="🔒 AKTIV — push"; lkEl.style.color="var(--amber)"; }
   else { lkEl.textContent = lk.enabled?"Gati (mbrojtje aktive)":"OFF"; lkEl.style.color=""; }
-  // 🛗 ashensori i fitimit
-  const ev = lk.elevator||{};
-  const evEl=$("elevState");
-  if(evEl){
-    const floor = ev.floor!=null?Number(ev.floor).toFixed(0):"—";
-    if(ev.paused){ evEl.textContent=`🛗 ${floor} · push`; evEl.style.color="var(--amber)"; }
-    else { evEl.textContent=`🛗 ${floor}`; evEl.style.color="var(--grn)"; }
-  }
   renderPipeline(pp);
   renderAgentsLine(S.status.agents);
   renderGroupsLine();

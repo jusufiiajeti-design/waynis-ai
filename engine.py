@@ -29,7 +29,6 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     EQUITY_LOCK_ENABLED, EQUITY_LOCK_PCT,
                     EQUITY_LOCK_PAUSE_MIN, PROFIT_LOCK_STEP_USD,
                     PROFIT_LOCK_PAUSE_MIN,
-                    ELEVATOR_ENABLED, ELEVATOR_STEP, ELEVATOR_PAUSE_MIN,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
@@ -100,9 +99,7 @@ class PaperEngine:
         # 💰 dyshemeja e fitimit në shkallë $60 (ruhet në cilësimet)
         self.profit_floor = float(settings.get("profit_floor", STARTING_BALANCE))
         self._pl_triggered = False
-        # 🛗 ASHENSORI I FITIMIT: dyshemeja ngjitet vetëm lart (mbijeton rindezjet)
-        self.elevator_floor = float(settings.get("elevator_floor", STARTING_BALANCE))
-        self._elev_paused_until = 0.0
+        # (asnjë sistem mbrojtës — muri/ashsensori u hoqën sipas kërkesës)
         # ⚖️ KOMPONIMI ASIMETRIK: gjendja aktuale e rrezikut
         self.asym_mult = float(settings.get("asym_mult", 1.0))
         # 📈 DCA state
@@ -378,10 +375,7 @@ class PaperEngine:
     # 🔒 Equity profit lock
     # ------------------------------------------------------------------
     def is_locked(self):
-        # 🔒 profit-lock/equity-lock + 🛗 push i ashensorit (vetëm bllokim
-        # i tregtive të reja — pozicionet e hapura NUK preken)
-        return (time.time() < self.lock_until
-                or time.time() < getattr(self, "_elev_paused_until", 0.0))
+        return time.time() < self.lock_until
 
     def lock_info(self):
         return {
@@ -389,12 +383,6 @@ class PaperEngine:
             "pct": self.equity_lock_pct,
             "locked": self.is_locked(),
             "until": self.lock_until,
-            "elevator": {
-                "enabled": bool(ELEVATOR_ENABLED),
-                "floor": getattr(self, "elevator_floor", STARTING_BALANCE),
-                "paused": time.time() < getattr(self, "_elev_paused_until", 0.0),
-                "paused_until": getattr(self, "_elev_paused_until", 0.0),
-            },
         }
 
     def set_equity_lock(self, enabled=None, pct=None):
@@ -831,11 +819,7 @@ class PaperEngine:
             await self.check_profit_lock()
         except Exception:
             pass
-        # 🛗 ASHENSORI I FITIMIT — kontrollohet çdo cikël
-        try:
-            await self.check_elevator()
-        except Exception:
-            pass
+
         # 📈 DCA periodic buy
         try:
             await self.dca_check()
@@ -909,11 +893,11 @@ class PaperEngine:
                 "WHERE id=1", (pnl, pnl))
         self.cooldown[pos["symbol"]] = time.time()
         self._turso_push_snapshot()      # ☁️ fitimi i kyçur ruhet
-        # 🧱 MURI + ⚖️ KOMPONIMI ASIMETRIK pas çdo tregtie të mbyllur
+        # ⚖️ KOMPONIMI ASIMETRIK pas çdo tregtie të mbyllur
         try:
             with self._conn() as c:
                 bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
-            self._raise_elevator(bal)
+
             if total_pnl > 0:
                 self.asym_mult = min(COMPOUND_MAX_RISK / (STARTING_BALANCE * TRADE_RISK),
                                      self.asym_mult * COMPOUND_WIN_MULT)
@@ -929,66 +913,6 @@ class PaperEngine:
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
                     f"(tarifa ${fees:.2f})",
                     pos["symbol"])
-
-    # ------------------------------------------------------------------
-    # 🛗 ASHENSORI I FITIMIT — zëvendëson murin (kërkesë e përdoruesit)
-    # ------------------------------------------------------------------
-    def _raise_elevator(self, balance_value):
-        """🛗 Ashensori ngjitet VETËM lart me FITIMIN E REALIZUAR (bilanci),
-        kat më kat me çdo ELEVATOR_STEP. Kurrë nuk zbret."""
-        try:
-            gain = balance_value - STARTING_BALANCE
-            if gain > 0 and balance_value > self.elevator_floor:
-                steps = int(gain // ELEVATOR_STEP) if ELEVATOR_STEP > 0 else int(gain)
-                new_floor = STARTING_BALANCE + steps * ELEVATOR_STEP
-                if new_floor > self.elevator_floor:
-                    self.elevator_floor = new_floor
-                    s = _load_settings(); s["elevator_floor"] = self.elevator_floor
-                    _save_settings(s)
-                    self._event("elevator",
-                                f"🛗 ASHENSORI U NGRIT në ${self.elevator_floor:.0f} — "
-                                f"niveli i ri i fitimit të arritur, s'zbret më poshtë",
-                                None)
-        except Exception:
-            pass
-
-    async def check_elevator(self):
-        """🛗 KONTROLLI I ASHENSORIT — thirret çdo cikël:
-        1. Dyshemeja ngjitet VETËM me fitimin e realizuar (bilanci) — kurrë
-           nga kulmet e përkohshme të equity.
-        2. Kur equity bie nën dyshemenë (dyshemeja > kapitali fillestar):
-           ndalohen VETËM tregtitë e reja për ELEVATOR_PAUSE_MIN — ASNJË
-           pozicion i hapur NUK mbyllët; fituesit vrapojnë te TP 3%, humbjet
-           te SL-i i tyre.
-        3. Kur equity rikthehet sipër dyshemesë → tregtimi rifillon vetë."""
-        if not ELEVATOR_ENABLED:
-            return False
-        try:
-            # 🔄 çmime të FRESKËTA para çdo vendimi (kurrë të vjetruara)
-            try:
-                fresh = await self.market.fetch_all_tickers()
-                if fresh:
-                    self.last_tickers = fresh
-            except Exception:
-                pass
-            acc = self.account()
-            eq = acc.get("equity", acc.get("balance", 0.0))
-            bal = acc.get("balance", eq)
-            # 🛗 dyshemeja ngrihet nga bilanci real (fitime të kyçura)
-            self._raise_elevator(bal)
-            if eq < self.elevator_floor and self.elevator_floor > STARTING_BALANCE:
-                if time.time() >= self._elev_paused_until:
-                    self._elev_paused_until = time.time() + ELEVATOR_PAUSE_MIN * 60
-                    self._event("elevator",
-                                f"🛗 ASHENSORI: equity ra nën dyshemenë "
-                                f"${self.elevator_floor:.0f} → push {ELEVATOR_PAUSE_MIN} min "
-                                f"para tregtive të reja. Pozicionet e hapura NUK preken.",
-                                None)
-                    self._set_pipeline(0, "Elevator", "🛗 Ashensori: push i përkohshëm")
-                return True
-            return False
-        except Exception:
-            return False
 
     # REAL-money order management (spot, LONG-only)
     # ------------------------------------------------------------------
