@@ -3034,9 +3034,9 @@ class PaperEngine:
                     (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
                 self._turso_ensure_schema()
                 if not self._turso_restore(c, pending):
-                    # nuk ka histori në Turso → demo fikse (për herë të parë)
-                    self._seed_history(c)
-                    self._seed_equity(c)
+                    # 🆕 fillim i pastër — pa histori, pa demo (kërkesë e
+                    # përdoruesit: 'fshij të gjitha, fillojmë nga e para')
+                    pass
         # 🔒 ngjarjet emetohen PAS transaksionit (shmang "database is locked")
         for etype, msg in pending:
             self._event(etype, msg)
@@ -3959,28 +3959,46 @@ class PaperEngine:
             self.equity_history = [e for e in self.equity_history if now - e[0] <= 86400 * 2]
 
     def reset(self, seed=True, reset_learning=False):
+        """🆕 RESET TOTAL — fillim nga zero i plotë:
+        fshin historinë LOKALE dhe CLOUD (Turso), rivendos bilancin $10,000,
+        komponimin ×1, dyshemetë, peshat dhe gjendjen e agjentëve."""
         with self._conn() as c:
             for t in ("trades", "events"):
                 c.execute(f"DELETE FROM {t}")
             c.execute("UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
                       (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
-            if seed:
-                self._seed_history(c)
-        # 💰 pas rivendosjes dyshemeja fillon nga e para
+        # ☁️ fshij edhe cloud-in (Turso) — pa këtë historia kthehej pas rindezjes
+        try:
+            if turso_enabled():
+                turso_exec("DELETE FROM trades")
+                turso_exec("DELETE FROM events")
+                turso_exec("DELETE FROM kv")
+                turso_exec("UPDATE account SET balance=?, peak=?, started_at=? WHERE id=1",
+                           (STARTING_BALANCE, STARTING_BALANCE, now_iso()))
+        except Exception:
+            pass
+        # 💰 rivendos gjithë state-in e botit
         self.profit_floor = STARTING_BALANCE
         self._pl_triggered = False
         self.equity_history = []
         self.cooldown = {}
+        self.asym_mult = 1.0                       # ⚖️ komponimi fillon nga ×1
+        self._loss_streak = 0
+        self._streak_paused_until = 0.0
+        self.daily_stop_until = 0.0
+        self.daily_start_bal = STARTING_BALANCE
+        self._goal_last_rung = 0
+        s = _load_settings()
+        s.update({"asym_mult": 1.0, "profit_floor": STARTING_BALANCE,
+                  "wall_floor": STARTING_BALANCE, "elevator_floor": STARTING_BALANCE,
+                  "daily_start_bal": STARTING_BALANCE})
+        _save_settings(s)
         if reset_learning:
             self.strategy_stats = {}
-            self.learning_last_id = 0
             save_weights(self.strategy_stats)
             self._event("reset", "Peshat e mësuara të strategjive u rivendosën")
-        else:
-            self.learning_last_id = 0
-        if seed:
-            self._seed_equity()
-        self._event("reset", "Llogaria u rivendos")
+        self.learning_last_id = 0
+        self._event("reset", "🆕 Fillim nga zero — llogaria u rivendos plotësisht")
 
     def persist_learning(self):
         """Persist learning weights + last processed trade id."""
