@@ -907,8 +907,7 @@ class PaperEngine:
             s = _load_settings(); s["asym_mult"] = self.asym_mult; _save_settings(s)
         except Exception:
             pass
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
-               ("AGJENT" if reason == "agent" else "exit"))
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
@@ -973,8 +972,7 @@ class PaperEngine:
                 (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
         self.cooldown[pos["symbol"]] = time.time()
         self.real_balance_cache = (0.0, 0.0)
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
-               ("AGJENT" if reason == "agent" else "exit"))
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
         self._event("close",
                     f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT",

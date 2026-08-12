@@ -12,14 +12,6 @@ STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-
-# ---- 🧠 TP ME ARSYETIM TË AGJENTËVE (kërkesë e përdoruesit) ----
-# Agjentët e mbyllin pozicionin ME FITIM kur analiza tregon se reversioni
-# u realizua: RSI u kthye në neutral (≥52 për LONG, ≤48 për SHORT) DHE
-# fitimi ≥ +0.8% — në vend të pritjes së gjatë për TP 3%. SL mbetet 2%.
-AGENT_TP_MIN_WIN = 0.008        # fitimi minimal për daljen e agjentit (+0.8%)
-AGENT_TP_RSI_EXIT = 52          # RSI ku agjenti e konsideron reversionin të realizuar
-TIME_STOP_MIN = 240             # rrjet sigurie: pas 4 orësh liro kapitalin
 MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
 
 # ---- real money (spot, LONG-only) ----
