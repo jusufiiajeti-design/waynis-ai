@@ -3,7 +3,7 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
-TRADE_RISK = 0.0012             # ~$12 risk SL/tregti me $10k (0.12%) — AGRESIV I MBROJTUR
+TRADE_RISK = 0.0015             # ~$15 risk SL/tregti me $10k (0.15%) — HYRJE MË TË MËDHA
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -48,10 +48,10 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren. NUK mbyll asnjë pozicion.
 # ❌ MURI dhe 🛗 ASHENSORI u HOQËN me kërkesë të përdoruesit —
 # asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
-COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
+COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
-COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
+COMPOUND_MAX_RISK = 60.0      # rreziku maksimal ($60) — hyrje më të mëdha pas fitoreve
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
@@ -59,6 +59,15 @@ COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
 # për të mbrojtur fitimin e kyçur. Dyshemeja ngrihet vetëm lart, kurrë poshtë.
 PROFIT_LOCK_STEP_USD = 0.0       # ❌ ÇAKTIVIZUAR — s'mbyll më asgjë për të 'kyçur' fitime
 PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
+
+# ---- 🛡️ MENAXHIMI KUNDËR HUMBJES (i ri, sipas kërkesës) ----
+# Ndalim automatik kur humbjet grumbullohen — e ruan kapitalin pa e ndaluar
+# botin përgjithmonë: push i shkurtër, pastaj rifillon vetë.
+LOSS_STREAK_LIMIT = 4           # 4 humbje radhazi → push i përkohshëm
+LOSS_STREAK_PAUSE_MIN = 30      # push 30 min (vetëm hyrjet; pozicionet e hapura s'preken)
+DAILY_STOP_PCT = 0.02           # −2% e bilancit në ditë → ndalo deri nesër
+GOAL_BALANCE = 1_000_000.0      # 🎯 synimi i përdoruesit: $1,000,000 (vetëm ekran)
+COOLDOWN_SECONDS = 0.3          # ⚡ rihyrje pas 0.3s — qarkullim edhe më i shpejtë
 
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on

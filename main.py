@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from providers import MarketData, WATCHLIST
 from engine import PaperEngine, CYCLE_SECONDS
-from config import FEE_RATE, SCAN_BATCH
+from config import FEE_RATE, SCAN_BATCH, GOAL_BALANCE
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = BASE          # files live at project root (flat, phone-friendly deploy)
@@ -262,6 +262,10 @@ async def status():
             "last": getattr(engine, "groups_last", None),
         },
         "profit_floor": getattr(engine, "profit_floor", 10000.0),
+        "goal": {
+            "target": GOAL_BALANCE,
+            "progress_pct": round(engine.account()["balance"] / GOAL_BALANCE * 100, 4),
+        },
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {

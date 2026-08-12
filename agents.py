@@ -39,6 +39,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
+                    COOLDOWN_SECONDS,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -145,7 +146,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 1:     # rihyrje MENJËHERËSH (1s) — qarkullim maksimal
+            if sym in e.cooldown and now - e.cooldown[sym] < COOLDOWN_SECONDS:  # ⚡ rihyrje pas 0.3s — qarkullim maksimal
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:

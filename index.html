@@ -295,6 +295,7 @@
         <div class="hero-main">
           <div class="made">+<span id="madeVal">0.00</span> <span class="cur">USDT</span></div>
           <div class="sub">të fituara që nga fillimi · Equity: <span id="eqVal">—</span></div>
+          <div class="sub" style="margin-top:2px">🎯 Synimi $1M: <b id="goalVal">—</b></div>
         </div>
         <div class="hero-side">
           <div class="hstat"><span class="hl" id="scanLbl">GRAFIKË TË SKANUAR</span><span class="hv" id="scanVal">0</span></div>
@@ -749,6 +750,12 @@ function renderStatus(){
   $("todayVal").textContent = sign(st.pnl_24h)+fmt(st.pnl_24h)+" USDT";
   $("todayVal").className = st.pnl_24h>=0?"up":"dn";
   $("eqVal").textContent = fmt(a.equity)+" USDT";
+  const gl = S.status.goal;
+  if(gl && $("goalVal")){
+    const pct = gl.progress_pct!=null?gl.progress_pct:0;
+    $("goalVal").textContent = fmt(pct,4)+"%";
+    $("goalVal").style.color = pct>=2?"var(--grn)":(pct>=1?"var(--amber)":"");
+  }
   const p=st.pnl_24h;
   const e=$("pnl24"); e.textContent = sign(p)+fmt(p)+" USDT"; e.className="v "+(p>=0?"up":"dn");
   $("winrate").textContent = fmt(st.win_rate,1)+"%";

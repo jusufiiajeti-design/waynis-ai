@@ -4,7 +4,7 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 2               # cikël më i shpejtë (2s) — qarkullim më i shpejtë
 SCAN_BATCH = 70                 # skanon të GJITHA monedhat çdo cikël (67 → 70)
-TRADE_RISK = 0.0012             # ~$12 risk SL/tregti me $10k (0.12%) — AGRESIV I MBROJTUR
+TRADE_RISK = 0.0015             # ~$15 risk SL/tregti me $10k (0.15%) — HYRJE MË TË MËDHA
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -49,10 +49,10 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # fitimet rriten shpejt, humbjet tkurren. NUK mbyll asnjë pozicion.
 # ❌ MURI dhe 🛗 ASHENSORI u HOQËN me kërkesë të përdoruesit —
 # asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
-COMPOUND_WIN_MULT = 1.8       # ×1.8 pas fitoreje (AGRESIV — fitimet rriten shpejt)
+COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
 COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
-COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
+COMPOUND_MAX_RISK = 60.0      # rreziku maksimal ($60) — hyrje më të mëdha pas fitoreve
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
@@ -60,6 +60,15 @@ COMPOUND_MAX_RISK = 50.0      # rreziku maksimal ($50) — s'ngrihet më lart
 # për të mbrojtur fitimin e kyçur. Dyshemeja ngrihet vetëm lart, kurrë poshtë.
 PROFIT_LOCK_STEP_USD = 0.0       # ❌ ÇAKTIVIZUAR — s'mbyll më asgjë për të 'kyçur' fitime
 PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
+
+# ---- 🛡️ MENAXHIMI KUNDËR HUMBJES (i ri, sipas kërkesës) ----
+# Ndalim automatik kur humbjet grumbullohen — e ruan kapitalin pa e ndaluar
+# botin përgjithmonë: push i shkurtër, pastaj rifillon vetë.
+LOSS_STREAK_LIMIT = 4           # 4 humbje radhazi → push i përkohshëm
+LOSS_STREAK_PAUSE_MIN = 30      # push 30 min (vetëm hyrjet; pozicionet e hapura s'preken)
+DAILY_STOP_PCT = 0.02           # −2% e bilancit në ditë → ndalo deri nesër
+GOAL_BALANCE = 1_000_000.0      # 🎯 synimi i përdoruesit: $1,000,000 (vetëm ekran)
+COOLDOWN_SECONDS = 0.3          # ⚡ rihyrje pas 0.3s — qarkullim edhe më i shpejtë
 
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on
@@ -1665,6 +1674,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
+                    COOLDOWN_SECONDS,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -1771,7 +1781,7 @@ class ScannerAgent(Agent):
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < 1:     # rihyrje MENJËHERËSH (1s) — qarkullim maksimal
+            if sym in e.cooldown and now - e.cooldown[sym] < COOLDOWN_SECONDS:  # ⚡ rihyrje pas 0.3s — qarkullim maksimal
                 continue
             klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
             if len(klines) >= 30:
@@ -2805,6 +2815,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     PROFIT_LOCK_PAUSE_MIN,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
+                    LOSS_STREAK_LIMIT, LOSS_STREAK_PAUSE_MIN, DAILY_STOP_PCT,
+                    GOAL_BALANCE,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
@@ -2876,6 +2888,12 @@ class PaperEngine:
         # (asnjë sistem mbrojtës — muri/ashsensori u hoqën sipas kërkesës)
         # ⚖️ KOMPONIMI ASIMETRIK: gjendja aktuale e rrezikut
         self.asym_mult = float(settings.get("asym_mult", 1.0))
+        # 🛡️ MENAXHIMI KUNDËR HUMBJES
+        self._loss_streak = 0                       # humbjet radhazi
+        self._streak_paused_until = 0.0             # push pas 4 humbjeve
+        self.daily_stop_until = 0.0                 # stop ditor
+        self.daily_start_bal = float(settings.get("daily_start_bal", STARTING_BALANCE))
+        self._day_key = time.strftime("%Y-%m-%d")
         # 📈 DCA state
         self.dca_enabled = settings.get("dca_enabled", DCA_ENABLED)
         self.dca_amount = settings.get("dca_amount", DCA_AMOUNT)
@@ -3149,7 +3167,11 @@ class PaperEngine:
     # 🔒 Equity profit lock
     # ------------------------------------------------------------------
     def is_locked(self):
-        return time.time() < self.lock_until
+        # bllokim i VETËM hyrjeve (pozicionet e hapura s'preken):
+        # profit-lock + 🛡️ push pas humbjeve radhazi + 🛡️ stop ditor
+        return (time.time() < self.lock_until
+                or time.time() < getattr(self, "_streak_paused_until", 0.0)
+                or time.time() < getattr(self, "daily_stop_until", 0.0))
 
     def lock_info(self):
         return {
@@ -3157,6 +3179,10 @@ class PaperEngine:
             "pct": self.equity_lock_pct,
             "locked": self.is_locked(),
             "until": self.lock_until,
+            "streak": getattr(self, "_loss_streak", 0),
+            "streak_paused_until": getattr(self, "_streak_paused_until", 0.0),
+            "daily_stop_until": getattr(self, "daily_stop_until", 0.0),
+            "daily_start_bal": getattr(self, "daily_start_bal", STARTING_BALANCE),
         }
 
     def set_equity_lock(self, enabled=None, pct=None):
@@ -3586,6 +3612,36 @@ class PaperEngine:
             await self._cycle(-1)
         return self.pipeline
 
+    def _check_daily(self):
+        """🛡️ STOP DITOR: −DAILY_STOP_PCT% e bilancit në ditë → ndalo deri
+        nesër (vetëm hyrjet). Në ditë të re, bilanci fillestar rifreskohet."""
+        try:
+            now = time.time()
+            key = time.strftime("%Y-%m-%d")
+            if key != self._day_key:
+                self._day_key = key
+                with self._conn() as c:
+                    bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+                self.daily_start_bal = bal
+                self.daily_stop_until = 0.0
+                self._loss_streak = 0
+            if self.daily_stop_until > 0:
+                return
+            with self._conn() as c:
+                bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+            loss_pct = (self.daily_start_bal - bal) / STARTING_BALANCE
+            if loss_pct >= DAILY_STOP_PCT:
+                self.daily_stop_until = now + 24 * 3600
+                s = _load_settings(); s["daily_start_bal"] = self.daily_start_bal
+                _save_settings(s)
+                self._event("lock",
+                            f"🛡️ STOP DITOR: −{loss_pct*100:.1f}% sot → ndalim "
+                            f"i tregtive deri nesër. Kapitali mbrohet, pozicionet "
+                            f"e hapura s'preken.",
+                            None)
+        except Exception:
+            pass
+
     async def _cycle(self, idx):
         self.pipeline["cycles_run"] += 1
         # 🔒 profit-lock check before anything else
@@ -3597,6 +3653,10 @@ class PaperEngine:
         # 📈 DCA periodic buy
         try:
             await self.dca_check()
+        except Exception:
+            pass
+        try:
+            self._check_daily()
         except Exception:
             pass
         ctx = CycleContext(self, self.market, idx)
@@ -3679,6 +3739,22 @@ class PaperEngine:
                 self.asym_mult = max(COMPOUND_MIN_RISK / (STARTING_BALANCE * TRADE_RISK),
                                      self.asym_mult * COMPOUND_LOSS_MULT)
             s = _load_settings(); s["asym_mult"] = self.asym_mult; _save_settings(s)
+        except Exception:
+            pass
+        # 🛡️ HUMBJET RADHAZI: LOSS_STREAK_LIMIT humbje → push (vetëm hyrjet)
+        try:
+            if total_pnl > 0:
+                self._loss_streak = 0
+            else:
+                self._loss_streak += 1
+                if (self._loss_streak >= LOSS_STREAK_LIMIT
+                        and time.time() >= self._streak_paused_until):
+                    self._streak_paused_until = time.time() + LOSS_STREAK_PAUSE_MIN * 60
+                    self._event("lock",
+                                f"🛡️ {LOSS_STREAK_LIMIT} humbje radhazi → push "
+                                f"{LOSS_STREAK_PAUSE_MIN} min para tregtive të reja. "
+                                f"Pozicionet e hapura s'preken.",
+                                None)
         except Exception:
             pass
         label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
@@ -3881,7 +3957,7 @@ from fastapi.staticfiles import StaticFiles
 
 from providers import MarketData, WATCHLIST
 from engine import PaperEngine, CYCLE_SECONDS
-from config import FEE_RATE, SCAN_BATCH
+from config import FEE_RATE, SCAN_BATCH, GOAL_BALANCE
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = BASE          # files live at project root (flat, phone-friendly deploy)
@@ -4129,6 +4205,10 @@ async def status():
             "last": getattr(engine, "groups_last", None),
         },
         "profit_floor": getattr(engine, "profit_floor", 10000.0),
+        "goal": {
+            "target": GOAL_BALANCE,
+            "progress_pct": round(engine.account()["balance"] / GOAL_BALANCE * 100, 4),
+        },
         "dca": engine.dca_status(),
         "mtf_enabled": True,
         "session": {
