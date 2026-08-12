@@ -13,6 +13,14 @@ STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
+
+# ---- 🧠 TP ME ARSYETIM TË AGJENTËVE (kërkesë e përdoruesit) ----
+# Agjentët e mbyllin pozicionin ME FITIM kur analiza tregon se reversioni
+# u realizua: RSI u kthye në neutral (≥52 për LONG, ≤48 për SHORT) DHE
+# fitimi ≥ +0.8% — në vend të pritjes së gjatë për TP 3%. SL mbetet 2%.
+AGENT_TP_MIN_WIN = 0.008        # fitimi minimal për daljen e agjentit (+0.8%)
+AGENT_TP_RSI_EXIT = 52          # RSI ku agjenti e konsideron reversionin të realizuar
+TIME_STOP_MIN = 240             # rrjet sigurie: pas 4 orësh liro kapitalin
 MAX_OPEN = 100                  # 100 pozicione njëkohësisht — më shumë tregti MR
 
 # ---- real money (spot, LONG-only) ----
@@ -1248,17 +1256,20 @@ def mean_reversion(symbol, k, ticker):
     if len(closes) < 40:
         return None
     r = rsi(closes, 14)
-    if r < 40:
-        return {"direction": "LONG", "confidence": clamp(58 + (40 - r) * 1.5, 52, 88)}
-    if r > 60:
-        return {"direction": "SHORT", "confidence": clamp(58 + (r - 60) * 1.5, 52, 88)}
+    # 🎯 CILËSI: hyrje vetëm kur RSI është mjaft ekstrem (38/62) — më pak
+    # sinjale, por më të mira (testuar: WR më e lartë, më pak humbje)
+    if r < 38:
+        return {"direction": "LONG", "confidence": clamp(58 + (38 - r) * 1.5, 52, 88)}
+    if r > 62:
+        return {"direction": "SHORT", "confidence": clamp(58 + (r - 62) * 1.5, 52, 88)}
     return None
 
 
 # 🎯 VETËM MEAN REVERSION — të gjitha strategjitë e tjera U FSHIËN
 # (kërkesa e përdoruesit). Kjo është strategjia e vetme aktive:
-# RSI < 40 → BUY (i mbishitur, kthehet lart) · RSI > 60 → SELL
-# (i mbingarkuar, kthehet poshtë) · TP 2.0% / SL 1.5% · testuar pozitiv.
+# RSI < 38 → BUY (i mbishitur, kthehet lart) · RSI > 62 → SELL
+# (i mbingarkuar, kthehet poshtë) · SL 2% fiks · TP 3% me arsyetim të
+# agjentëve (mbyll herët me fitim kur RSI kthehet në neutral) · testuar.
 STRATEGIES = [
     {"name": "Mean Reversion",   "icon": "🎯", "fn": mean_reversion},
 ]
@@ -1662,6 +1673,7 @@ import time
 from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE,
+                    AGENT_TP_MIN_WIN, AGENT_TP_RSI_EXIT, TIME_STOP_MIN,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -2578,14 +2590,15 @@ class TrackerAgent(Agent):
 
             if side != "LONG" or not ENABLE_PARTIAL_TP or not pos.get("tp1"):
                 # classic symmetric handling (SHORT or partial off)
-                # ⏱️ TIME-STOP: pas 60 minutash liro kapitalin — me fitim e
-                # mbyll me fitimin aktual, pa fitim me humbje të vogël.
+                # ⏱️ TIME-STOP: rrjet sigurie pas TIME_STOP_MIN minutash — më
+                # i gjatë se më parë (240 min) që TP 3% të ketë kohë të arrijë;
+                # daljet e shpejta i bëjnë agjentët (TP me arsyetim).
                 try:
                     opened = datetime.datetime.fromisoformat(pos["opened_at"]).timestamp()
                     age_min = (time.time() - opened) / 60.0
                 except Exception:
                     age_min = 0.0
-                if age_min >= 90:    # MR pret kthimin (testuar: time-stop i shkurtër dëmton WR)
+                if age_min >= TIME_STOP_MIN:
                     await e._close_trade(pos, price, "time")
                     continue
                 await self._track_classic(e, pos, price)
@@ -2622,11 +2635,48 @@ class TrackerAgent(Agent):
         else:
             self.report("Asnjë pozicion aktiv — cikli u përfundua")
 
+    async def _symbol_rsi(self, e, symbol):
+        """RSI(14) i freskët 5m për një simbol (cache 60s) — për arsyetimin
+        e agjentëve: kur RSI kthehet në neutral, reversioni u realizua."""
+        now = time.time()
+        cache = getattr(self, "_rsi_cache", {})
+        ts = getattr(self, "_rsi_ts", {})
+        if symbol in cache and now - ts.get(symbol, 0) < 60:
+            return cache[symbol]
+        try:
+            kl = await e.market.fetch_klines(symbol, "5m", 60)
+            closes = [x["c"] for x in kl]
+            r = rsi(closes, 14) if len(closes) >= 20 else None
+        except Exception:
+            r = None
+        cache[symbol] = r
+        ts[symbol] = now
+        self._rsi_cache = cache
+        self._rsi_ts = ts
+        return r
+
     async def _track_classic(self, e, pos, price):
         side = pos["side"]
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
         if not hit_tp and not hit_sl:
+            # 🧠 AGJENTËT SHOHIN ARSYEN: nëse fitimi ≥ +0.8% DHE RSI u kthye
+            # në neutral (reversioni u realizua) → mbyll me fitim të sigurt
+            # në vend të pritjes së gjatë për TP 3%.
+            try:
+                pnl_pct = (price - pos["entry"]) / pos["entry"] if side == "LONG" \
+                    else (pos["entry"] - price) / pos["entry"]
+                if pnl_pct >= AGENT_TP_MIN_WIN:
+                    r = await self._symbol_rsi(e, pos["symbol"])
+                    if r is not None:
+                        if side == "LONG" and r >= AGENT_TP_RSI_EXIT:
+                            await e._close_trade(pos, price, "agent")
+                            return
+                        if side == "SHORT" and r <= (100 - AGENT_TP_RSI_EXIT):
+                            await e._close_trade(pos, price, "agent")
+                            return
+            except Exception:
+                pass
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
             # të arrihet (mean reversion, TP simetrik).
@@ -3666,7 +3716,8 @@ class PaperEngine:
             s = _load_settings(); s["asym_mult"] = self.asym_mult; _save_settings(s)
         except Exception:
             pass
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("AGJENT" if reason == "agent" else "exit"))
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
@@ -3731,7 +3782,8 @@ class PaperEngine:
                 (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
         self.cooldown[pos["symbol"]] = time.time()
         self.real_balance_cache = (0.0, 0.0)
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("AGJENT" if reason == "agent" else "exit"))
         self._event("close",
                     f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT",

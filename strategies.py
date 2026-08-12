@@ -294,17 +294,20 @@ def mean_reversion(symbol, k, ticker):
     if len(closes) < 40:
         return None
     r = rsi(closes, 14)
-    if r < 40:
-        return {"direction": "LONG", "confidence": clamp(58 + (40 - r) * 1.5, 52, 88)}
-    if r > 60:
-        return {"direction": "SHORT", "confidence": clamp(58 + (r - 60) * 1.5, 52, 88)}
+    # 🎯 CILËSI: hyrje vetëm kur RSI është mjaft ekstrem (38/62) — më pak
+    # sinjale, por më të mira (testuar: WR më e lartë, më pak humbje)
+    if r < 38:
+        return {"direction": "LONG", "confidence": clamp(58 + (38 - r) * 1.5, 52, 88)}
+    if r > 62:
+        return {"direction": "SHORT", "confidence": clamp(58 + (r - 62) * 1.5, 52, 88)}
     return None
 
 
 # 🎯 VETËM MEAN REVERSION — të gjitha strategjitë e tjera U FSHIËN
 # (kërkesa e përdoruesit). Kjo është strategjia e vetme aktive:
-# RSI < 40 → BUY (i mbishitur, kthehet lart) · RSI > 60 → SELL
-# (i mbingarkuar, kthehet poshtë) · TP 2.0% / SL 1.5% · testuar pozitiv.
+# RSI < 38 → BUY (i mbishitur, kthehet lart) · RSI > 62 → SELL
+# (i mbingarkuar, kthehet poshtë) · SL 2% fiks · TP 3% me arsyetim të
+# agjentëve (mbyll herët me fitim kur RSI kthehet në neutral) · testuar.
 STRATEGIES = [
     {"name": "Mean Reversion",   "icon": "🎯", "fn": mean_reversion},
 ]
