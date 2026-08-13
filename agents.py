@@ -165,7 +165,9 @@ class ScannerAgent(Agent):
         async def _fetch(sym):
             async with _SEM:
                 try:
-                    kl = await ctx.market.fetch_klines(sym, "5m", 120)
+                    # 🐛 FIX: V1 kërkon 205+ qirinj (EMA200) — 120 s'mjaftonin,
+                    # prandaj asnjë sinjal nuk dilte kurrë live
+                    kl = await ctx.market.fetch_klines(sym, "5m", 250)
                     return sym, kl
                 except Exception:
                     return sym, []

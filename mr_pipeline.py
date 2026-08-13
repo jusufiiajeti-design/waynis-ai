@@ -21,7 +21,7 @@ import math
 DEFAULT_CONFIG = {
     # Regime
     "adxPeriod": 14,
-    "adxTrendThreshold": 28.0,   # akorduar: më pak bllokim se 25 (më shumë qarkullim)
+    "adxTrendThreshold": 45.0,   # ⚡ TREGTIM MENJËHERË: bllokon vetëm trendet shumë të forta
     "emaFast": 50,
     "emaSlow": 200,
     "emaSlopeMaxPct": 0.05,
@@ -30,13 +30,13 @@ DEFAULT_CONFIG = {
     "bbStdDev": 2.0,
     "zscorePeriod": 20,
     "rsiPeriod": 14,
-    "rsiLongMax": 40.0,          # akorduar nga 35 (më shumë sinjale)
-    "rsiShortMin": 60.0,         # akorduar nga 65
+    "rsiLongMax": 45.0,          # ⚡ TREGTIM MENJËHERË: pragje më të buta
+    "rsiShortMin": 55.0,         # ⚡ TREGTIM MENJËHERË
     "atrPeriod": 14,
     "atrSpikeMult": 2.0,         # akorduar nga 1.5 (më pak refuzime nga spike)
     # Confirmation
-    "confirmationMinNormal": 2,  # akorduar nga 3
-    "confirmationMinCaution": 3,
+    "confirmationMinNormal": 1,  # ⚡ TREGTIM MENJËHERË: mjafton 1 konfirmim
+    "confirmationMinCaution": 2,
     # Risk
     "riskPctNormal": 0.0025,
     "riskPctCaution": 0.0010,
@@ -201,9 +201,11 @@ def _mr_signal(candles, ind, i, cfg):
         return None
     if atr_v > cfg["atrSpikeMult"] * atr_avg:
         return None  # volatility spike — mos hyr
-    if z <= -2.0 and close <= bb_lo and r <= cfg["rsiLongMax"]:
+    # ⚡ TREGTIM MENJËHERË: pragje shumë të buta (z 1.2, RSI 48/52)
+    # Bollinger mbetet tregues por jo pengesë e fortë — vetëm RSI + z-score.
+    if z <= -1.2 and r <= 48.0:
         return "LONG"
-    if z >= 2.0 and close >= bb_hi and r >= cfg["rsiShortMin"]:
+    if z >= 1.2 and r >= 52.0:
         return "SHORT"
     return None
 
