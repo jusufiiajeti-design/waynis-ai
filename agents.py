@@ -40,6 +40,7 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
                     COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE, GOAL_BALANCE,
+                    TP_EXIT_PCT,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -1069,6 +1070,15 @@ class TrackerAgent(Agent):
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
         if not hit_tp and not hit_sl:
+            # 🎯 MBYLLJE NË 90% TË TP-së (kërkesë e përdoruesit): çdo pozicion
+            # në plus mbyllet kur fitimi arrin 90% të rrugës drejt TP-së —
+            # fitimi kyçet herët (TP 3% → mbyll në +2.7%) pa pritur TP-në e
+            # plotë që shpesh kthehet mbrapa.
+            pnl_pct = (price - pos["entry"]) / pos["entry"] if side == "LONG" \
+                else (pos["entry"] - price) / pos["entry"]
+            if pnl_pct >= TP_EXIT_PCT * TAKE_PROFIT:
+                await e._close_trade(pos, price, "tp90")
+                return
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
             # të arrihet (mean reversion, TP simetrik).

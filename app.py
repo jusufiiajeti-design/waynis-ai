@@ -61,15 +61,14 @@ COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5) — KURRË më shumë se $5
 PROFIT_LOCK_STEP_USD = 0.0       # ❌ ÇAKTIVIZUAR — s'mbyll më asgjë për të 'kyçur' fitime
 PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
 
-# ---- 🎯 TARGET FITIMI +$90 + MBROJTJA E HUMBJEVE (kërkesë e përdoruesit) ----
-# 1) Kur fitimi (equity) arrin +PROFIT_TARGET_USD mbi fillestarin → mbyll
-#    TË GJITHA pozicionet (kyç fitimin e arritur), pastaj vazhdon nga niveli
-#    i ri (ashensor me hapa: +90 → +180 → +270...).
+# ---- 🎯 MBYLLJA NË 90% TË TP-SË + MBROJTJA E HUMBJEVE (kërkesë e përdoruesit) ----
+# 1) Çdo pozicion NË PLUS mbyllet kur fitimi arrin 90% të TP-së së tij
+#    (TP 3% → fitim 2.7% → mbyll dhe kyç) — fitimi kyçet herët, pa pritur
+#    TP-në e plotë që shpesh kthehet mbrapa.
 # 2) Kur equity bie NËN kapitalin fillestar → sistemi mbrojtës mbyll VETËM
 #    pozicionet HUMBËSE (i pret sa janë të vogla), fituesit vrapojnë te TP;
 #    më pas push i shkurtër para tregtive të reja (rikuperim).
-PROFIT_TARGET_USD = 90.0        # 🎯 +$90 → mbyll gjithçka
-PROFIT_TARGET_STEP = 90.0       # hapat e ashensorit pas çdo mbylljeje
+TP_EXIT_PCT = 0.90              # 🎯 mbyll në 90% të rrugës drejt TP-së (0.90 = 90%)
 DEFENSE_BELOW_START = True      # 🛡️ mbrojtja e humbjeve kur equity < fillestar
 DEFENSE_PAUSE_MIN = 15          # push pas mbylljes së humbjeve (min)
 
@@ -2225,6 +2224,7 @@ from config import (STARTING_BALANCE, SCAN_BATCH, TRADE_RISK,
                     TAKE_PROFIT, STOP_LOSS, BREAKEVEN_AT,
                     MIN_CONFIDENCE, MAX_OPEN, FEE_RATE, MAX_SAME_DIRECTION,
                     COOLDOWN_SECONDS, MAX_PORTFOLIO_LEVERAGE, GOAL_BALANCE,
+                    TP_EXIT_PCT,
                     REAL_MIN_NOTIONAL, REAL_MAX_NOTIONAL_PCT,
                     REAL_MAX_POSITIONS,
                     ENABLE_PARTIAL_TP, TP1_PARTIAL, PARTIAL_FRACTION,
@@ -3254,6 +3254,15 @@ class TrackerAgent(Agent):
         hit_tp = (price >= pos["tp"]) if side == "LONG" else (price <= pos["tp"])
         hit_sl = (price <= pos["sl"]) if side == "LONG" else (price >= pos["sl"])
         if not hit_tp and not hit_sl:
+            # 🎯 MBYLLJE NË 90% TË TP-së (kërkesë e përdoruesit): çdo pozicion
+            # në plus mbyllet kur fitimi arrin 90% të rrugës drejt TP-së —
+            # fitimi kyçet herët (TP 3% → mbyll në +2.7%) pa pritur TP-në e
+            # plotë që shpesh kthehet mbrapa.
+            pnl_pct = (price - pos["entry"]) / pos["entry"] if side == "LONG" \
+                else (pos["entry"] - price) / pos["entry"]
+            if pnl_pct >= TP_EXIT_PCT * TAKE_PROFIT:
+                await e._close_trade(pos, price, "tp90")
+                return
             # 🧠 TRAILING: sapo fitimi arrin +1.0%, SL ngrihet pas çmimit
             # (0.6% poshtë majës) — fitimi mbrohet por TP 1.5% ka kohë
             # të arrihet (mean reversion, TP simetrik).
@@ -3457,7 +3466,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     LOSS_STREAK_LIMIT, LOSS_STREAK_PAUSE_MIN, DAILY_STOP_PCT,
-                    GOAL_BALANCE, PROFIT_TARGET_USD, PROFIT_TARGET_STEP,
+                    GOAL_BALANCE, TP_EXIT_PCT,
                     DEFENSE_BELOW_START, DEFENSE_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
@@ -4255,29 +4264,15 @@ class PaperEngine:
         return self.pipeline
 
     async def check_profit_target(self):
-        """🎯 TARGET FITIMI +$90 + 🛡️ MBROJTJA E HUMBJEVE (kërkesa e përdoruesit):
-        1) Kur equity arrin +PROFIT_TARGET_USD mbi nivelin e kyçur → mbyll
-           TË GJITHA pozicionet ('target') dhe ngre dyshemenë (ashensor).
-        2) Kur equity bie NËN kapitalin fillestar → mbyll VETËM pozicionet
-           HUMBËSE ('defense'), fituesit vrapojnë te TP; pastaj push i
-           shkurtër para rihapjes."""
+        """🛡️ MBROJTJA E HUMBJEVE (kërkesa e përdoruesit): kur equity bie
+        NËN kapitalin fillestar → mbyll VETËM pozicionet HUMBËSE reale,
+        fituesit vrapojnë te TP; pastaj push i shkurtër para rihapjes.
+        (Mbyllja në 90% të TP-së bëhet te Tracker, pozicion për pozicion.)"""
         try:
             now = time.time()
             acc = self.account()
             eq = acc.get("equity", acc.get("balance", 0.0))
             bal = acc.get("balance", eq)
-            # 🎯 TARGETI: equity ≥ dyshemeja + $90 → kyç
-            if eq >= self._target_floor + PROFIT_TARGET_USD:
-                n = await self._close_all("target")
-                new_floor = self._target_floor + PROFIT_TARGET_STEP
-                self._target_floor = new_floor
-                s = _load_settings(); s["target_floor"] = new_floor; _save_settings(s)
-                self._event("goal",
-                            f"🎯 TARGET +${PROFIT_TARGET_USD:.0f} U ARRIT! "
-                            f"U mbyllën {n} pozicione — fitimi i kyçur në "
-                            f"${new_floor:.0f}. Niveli i ri: ${new_floor:.0f}.",
-                            None)
-                return True
             # 🛡️ MBROJTJA E HUMBJEVE: equity nën fillestarin → prit VETËM humbjet
             if (DEFENSE_BELOW_START and eq < STARTING_BALANCE
                     and now >= self._defense_paused_until
@@ -4470,7 +4465,8 @@ class PaperEngine:
                                 None)
         except Exception:
             pass
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("TP90" if reason == "tp90" else "exit"))
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
@@ -4535,7 +4531,8 @@ class PaperEngine:
                 (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
         self.cooldown[pos["symbol"]] = time.time()
         self.real_balance_cache = (0.0, 0.0)
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("TP90" if reason == "tp90" else "exit"))
         self._event("close",
                     f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT",
@@ -4640,11 +4637,8 @@ class PaperEngine:
         self.daily_stop_until = 0.0
         self.daily_start_bal = STARTING_BALANCE
         self._goal_last_rung = 0
-        self._target_floor = STARTING_BALANCE
         self._defense_paused_until = 0.0
-        s2 = _load_settings(); s2["target_floor"] = STARTING_BALANCE; _save_settings(s2)
-        # 🎯 TARGET FITIMI +$90 + MBROJTJA E HUMBJEVE
-        self._target_floor = float(settings.get("target_floor", STARTING_BALANCE))
+        # 🛡️ MBROJTJA E HUMBJEVE
         self._defense_paused_until = 0.0
         s = _load_settings()
         s.update({"asym_mult": 1.0, "profit_floor": STARTING_BALANCE,

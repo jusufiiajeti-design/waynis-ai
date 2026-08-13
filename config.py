@@ -60,15 +60,14 @@ COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5) — KURRË më shumë se $5
 PROFIT_LOCK_STEP_USD = 0.0       # ❌ ÇAKTIVIZUAR — s'mbyll më asgjë për të 'kyçur' fitime
 PROFIT_LOCK_PAUSE_MIN = 10       # push pas mbylljes mbrojtëse
 
-# ---- 🎯 TARGET FITIMI +$90 + MBROJTJA E HUMBJEVE (kërkesë e përdoruesit) ----
-# 1) Kur fitimi (equity) arrin +PROFIT_TARGET_USD mbi fillestarin → mbyll
-#    TË GJITHA pozicionet (kyç fitimin e arritur), pastaj vazhdon nga niveli
-#    i ri (ashensor me hapa: +90 → +180 → +270...).
+# ---- 🎯 MBYLLJA NË 90% TË TP-SË + MBROJTJA E HUMBJEVE (kërkesë e përdoruesit) ----
+# 1) Çdo pozicion NË PLUS mbyllet kur fitimi arrin 90% të TP-së së tij
+#    (TP 3% → fitim 2.7% → mbyll dhe kyç) — fitimi kyçet herët, pa pritur
+#    TP-në e plotë që shpesh kthehet mbrapa.
 # 2) Kur equity bie NËN kapitalin fillestar → sistemi mbrojtës mbyll VETËM
 #    pozicionet HUMBËSE (i pret sa janë të vogla), fituesit vrapojnë te TP;
 #    më pas push i shkurtër para tregtive të reja (rikuperim).
-PROFIT_TARGET_USD = 90.0        # 🎯 +$90 → mbyll gjithçka
-PROFIT_TARGET_STEP = 90.0       # hapat e ashensorit pas çdo mbylljeje
+TP_EXIT_PCT = 0.90              # 🎯 mbyll në 90% të rrugës drejt TP-së (0.90 = 90%)
 DEFENSE_BELOW_START = True      # 🛡️ mbrojtja e humbjeve kur equity < fillestar
 DEFENSE_PAUSE_MIN = 15          # push pas mbylljes së humbjeve (min)
 

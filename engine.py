@@ -32,7 +32,7 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     LOSS_STREAK_LIMIT, LOSS_STREAK_PAUSE_MIN, DAILY_STOP_PCT,
-                    GOAL_BALANCE, PROFIT_TARGET_USD, PROFIT_TARGET_STEP,
+                    GOAL_BALANCE, TP_EXIT_PCT,
                     DEFENSE_BELOW_START, DEFENSE_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
@@ -830,29 +830,15 @@ class PaperEngine:
         return self.pipeline
 
     async def check_profit_target(self):
-        """🎯 TARGET FITIMI +$90 + 🛡️ MBROJTJA E HUMBJEVE (kërkesa e përdoruesit):
-        1) Kur equity arrin +PROFIT_TARGET_USD mbi nivelin e kyçur → mbyll
-           TË GJITHA pozicionet ('target') dhe ngre dyshemenë (ashensor).
-        2) Kur equity bie NËN kapitalin fillestar → mbyll VETËM pozicionet
-           HUMBËSE ('defense'), fituesit vrapojnë te TP; pastaj push i
-           shkurtër para rihapjes."""
+        """🛡️ MBROJTJA E HUMBJEVE (kërkesa e përdoruesit): kur equity bie
+        NËN kapitalin fillestar → mbyll VETËM pozicionet HUMBËSE reale,
+        fituesit vrapojnë te TP; pastaj push i shkurtër para rihapjes.
+        (Mbyllja në 90% të TP-së bëhet te Tracker, pozicion për pozicion.)"""
         try:
             now = time.time()
             acc = self.account()
             eq = acc.get("equity", acc.get("balance", 0.0))
             bal = acc.get("balance", eq)
-            # 🎯 TARGETI: equity ≥ dyshemeja + $90 → kyç
-            if eq >= self._target_floor + PROFIT_TARGET_USD:
-                n = await self._close_all("target")
-                new_floor = self._target_floor + PROFIT_TARGET_STEP
-                self._target_floor = new_floor
-                s = _load_settings(); s["target_floor"] = new_floor; _save_settings(s)
-                self._event("goal",
-                            f"🎯 TARGET +${PROFIT_TARGET_USD:.0f} U ARRIT! "
-                            f"U mbyllën {n} pozicione — fitimi i kyçur në "
-                            f"${new_floor:.0f}. Niveli i ri: ${new_floor:.0f}.",
-                            None)
-                return True
             # 🛡️ MBROJTJA E HUMBJEVE: equity nën fillestarin → prit VETËM humbjet
             if (DEFENSE_BELOW_START and eq < STARTING_BALANCE
                     and now >= self._defense_paused_until
@@ -1045,7 +1031,8 @@ class PaperEngine:
                                 None)
         except Exception:
             pass
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("TP90" if reason == "tp90" else "exit"))
         self._event("close",
                     f"{pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if total_pnl >= 0 else ''}{total_pnl:.2f} USDT "
@@ -1110,7 +1097,8 @@ class PaperEngine:
                 (exit_price, status, now_iso(), pnl, reason, fees, pos["id"]))
         self.cooldown[pos["symbol"]] = time.time()
         self.real_balance_cache = (0.0, 0.0)
-        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else "exit")
+        label = "TP" if reason == "tp" else ("SL" if reason == "sl" else
+               ("TP90" if reason == "tp90" else "exit"))
         self._event("close",
                     f"💰 REAL {pos['side']} {pos['symbol']} u mbyll ({label}) "
                     f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT",
@@ -1215,11 +1203,8 @@ class PaperEngine:
         self.daily_stop_until = 0.0
         self.daily_start_bal = STARTING_BALANCE
         self._goal_last_rung = 0
-        self._target_floor = STARTING_BALANCE
         self._defense_paused_until = 0.0
-        s2 = _load_settings(); s2["target_floor"] = STARTING_BALANCE; _save_settings(s2)
-        # 🎯 TARGET FITIMI +$90 + MBROJTJA E HUMBJEVE
-        self._target_floor = float(settings.get("target_floor", STARTING_BALANCE))
+        # 🛡️ MBROJTJA E HUMBJEVE
         self._defense_paused_until = 0.0
         s = _load_settings()
         s.update({"asym_mult": 1.0, "profit_floor": STARTING_BALANCE,
