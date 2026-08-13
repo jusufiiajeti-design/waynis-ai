@@ -32,7 +32,8 @@ from config import (STARTING_BALANCE, CYCLE_SECONDS, SCAN_BATCH, TRADE_RISK,
                     COMPOUND_WIN_MULT, COMPOUND_LOSS_MULT,
                     COMPOUND_MIN_RISK, COMPOUND_MAX_RISK,
                     LOSS_STREAK_LIMIT, LOSS_STREAK_PAUSE_MIN, DAILY_STOP_PCT,
-                    GOAL_BALANCE,
+                    GOAL_BALANCE, PROFIT_TARGET_USD, PROFIT_TARGET_STEP,
+                    DEFENSE_BELOW_START, DEFENSE_PAUSE_MIN,
                     DCA_ENABLED, DCA_AMOUNT, DCA_INTERVAL_MIN, DCA_SYMBOL)
 from providers import MarketData, WATCHLIST
 from agents import (CycleContext, ScannerAgent, ALL_AGENTS,
@@ -828,6 +829,56 @@ class PaperEngine:
             await self._cycle(-1)
         return self.pipeline
 
+    async def check_profit_target(self):
+        """🎯 TARGET FITIMI +$90 + 🛡️ MBROJTJA E HUMBJEVE (kërkesa e përdoruesit):
+        1) Kur equity arrin +PROFIT_TARGET_USD mbi nivelin e kyçur → mbyll
+           TË GJITHA pozicionet ('target') dhe ngre dyshemenë (ashensor).
+        2) Kur equity bie NËN kapitalin fillestar → mbyll VETËM pozicionet
+           HUMBËSE ('defense'), fituesit vrapojnë te TP; pastaj push i
+           shkurtër para rihapjes."""
+        try:
+            now = time.time()
+            acc = self.account()
+            eq = acc.get("equity", acc.get("balance", 0.0))
+            bal = acc.get("balance", eq)
+            # 🎯 TARGETI: equity ≥ dyshemeja + $90 → kyç
+            if eq >= self._target_floor + PROFIT_TARGET_USD:
+                n = await self._close_all("target")
+                new_floor = self._target_floor + PROFIT_TARGET_STEP
+                self._target_floor = new_floor
+                s = _load_settings(); s["target_floor"] = new_floor; _save_settings(s)
+                self._event("goal",
+                            f"🎯 TARGET +${PROFIT_TARGET_USD:.0f} U ARRIT! "
+                            f"U mbyllën {n} pozicione — fitimi i kyçur në "
+                            f"${new_floor:.0f}. Niveli i ri: ${new_floor:.0f}.",
+                            None)
+                return True
+            # 🛡️ MBROJTJA E HUMBJEVE: equity nën fillestarin → prit VETËM humbjet
+            if (DEFENSE_BELOW_START and eq < STARTING_BALANCE
+                    and now >= self._defense_paused_until
+                    and bal < STARTING_BALANCE):
+                pos = self.open_positions()
+                n = 0
+                for p in pos:
+                    # vetëm humbjet REALE (≥ 0.5%) — mikro-humbjet që sapo u
+                    # hapën nuk preken (përndryshe bëhej churn me tarifa)
+                    pnl_pct = (p.get("pnl", 0)) / (p.get("entry", 0) * p.get("qty", 0) or 1)
+                    if p.get("pnl", 0) < 0 and pnl_pct <= -0.005:
+                        price = p.get("price") or p["entry"]
+                        await self._close_trade(p, price, "defense")
+                        n += 1
+                if n:
+                    self._defense_paused_until = now + DEFENSE_PAUSE_MIN * 60
+                    self._event("lock",
+                                f"🛡️ MBROJTJA: equity nën ${STARTING_BALANCE:.0f} → "
+                                f"u mbyllën {n} pozicione HUMBËSE. Fituesit vrapojnë "
+                                f"te TP. Push {DEFENSE_PAUSE_MIN} min para rihapjes.",
+                                None)
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _check_daily(self):
         """🛡️ STOP DITOR: −DAILY_STOP_PCT% e bilancit në ditë → ndalo deri
         nesër (vetëm hyrjet). Në ditë të re, bilanci fillestar rifreskohet."""
@@ -879,6 +930,11 @@ class PaperEngine:
         # 🔒 profit-lock check before anything else
         try:
             await self.check_profit_lock()
+        except Exception:
+            pass
+        # 🎯 target fitimi +$90 / 🛡️ mbrojtja e humbjeve
+        try:
+            await self.check_profit_target()
         except Exception:
             pass
 
@@ -1159,6 +1215,12 @@ class PaperEngine:
         self.daily_stop_until = 0.0
         self.daily_start_bal = STARTING_BALANCE
         self._goal_last_rung = 0
+        self._target_floor = STARTING_BALANCE
+        self._defense_paused_until = 0.0
+        s2 = _load_settings(); s2["target_floor"] = STARTING_BALANCE; _save_settings(s2)
+        # 🎯 TARGET FITIMI +$90 + MBROJTJA E HUMBJEVE
+        self._target_floor = float(settings.get("target_floor", STARTING_BALANCE))
+        self._defense_paused_until = 0.0
         s = _load_settings()
         s.update({"asym_mult": 1.0, "profit_floor": STARTING_BALANCE,
                   "wall_floor": STARTING_BALANCE, "elevator_floor": STARTING_BALANCE,
