@@ -2328,7 +2328,7 @@ def _make_strategy(entry):
 # Strategjitë e tjera janë ndalur me kërkesë të përdoruesit.
 MR_ONLY = True
 STRATEGY_AGENTS = [_make_strategy(s) for s in STRATEGIES
-                   if not MR_ONLY or s["name"] == "Mean Reversion"]
+                   if not MR_ONLY or "Mean Reversion" in s["name"]]
 
 
 # ======================================================================
