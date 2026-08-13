@@ -271,7 +271,7 @@ async def status():
         "session": {
             "started_at": engine.started_at,
             "scan_count": engine.scan_count,
-            "watchlist_size": len(WATCHLIST),
+            "watchlist_size": len(getattr(engine.market, "_cache", {}).get("universe", (0, None))[1]) if getattr(engine.market, "_cache", {}).get("universe") else len(WATCHLIST),
             "scanned_per_cycle": SCAN_BATCH,
         },
         "agents": engine.agents_info(),

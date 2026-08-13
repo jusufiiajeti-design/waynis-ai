@@ -2,7 +2,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
-SCAN_BATCH = 100                # 📡 skanon TË GJITHA monedhat çdo cikël (100)
+SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çdo cikël
 TRADE_RISK = 0.0005             # ~$5 risk SL/tregti me $10k (0.05%) — HYRJE TË VOGLA (kërkesë: "$5")
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)

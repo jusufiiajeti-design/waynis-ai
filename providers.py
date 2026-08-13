@@ -121,6 +121,35 @@ class MarketData:
     # ------------------------------------------------------------------
     # Tickers (all watchlist prices in one OKX call)
     # ------------------------------------------------------------------
+    async def scan_universe(self, min_vol_usdt=50000):
+        """🌐 UNIVERSI DINAMIK: TË GJITHA çiftet USDT në OKX me vëllim 24h
+        ≥ min_vol_usdt (likuiditet real). WATCHLIST-i mbetet bërthama (me
+        simbole fallback), por kthehen edhe të gjitha monedhat e tjera.
+        Cache 10 min — një kërkesë për të gjithë tregun."""
+        now = time.time()
+        cached = self._cache.get("universe")
+        if cached and now - cached[0] < 600:
+            return cached[1]
+        out = [(w[0], w[1], w[2]) for w in WATCHLIST]
+        seen = {w[0] for w in out}
+        try:
+            data = await _http_json_async(
+                "https://www.okx.com/api/v5/market/tickers?instType=SPOT")
+            if data.get("code") == "0":
+                for t in data["data"]:
+                    sym = t.get("instId", "")
+                    if not sym.endswith("-USDT") or sym in seen:
+                        continue
+                    vol_usdt = _safe_float(t.get("volCcy24h"))
+                    if vol_usdt < min_vol_usdt:
+                        continue
+                    out.append((sym, None, None))
+                    seen.add(sym)
+        except Exception:
+            pass
+        self._cache["universe"] = (now, out)
+        return out
+
     async def fetch_all_tickers(self) -> dict:
         """Returns {okx_symbol: {price, open24, high24, low24, vol24, chg24, ts}}"""
         now = time.time()
@@ -137,7 +166,7 @@ class MarketData:
                 fresh = {}
                 for t in data["data"]:
                     sym = t["instId"]
-                    if sym not in {w[0] for w in WATCHLIST}:
+                    if not sym.endswith("-USDT"):
                         continue
                     last = _safe_float(t.get("last"))
                     open24 = _safe_float(t.get("open24h"))
@@ -210,7 +239,7 @@ class MarketData:
         ckey = (okx_symbol, interval, limit)
         now = time.time()
         cached = self._cache.get(ckey)
-        if cached and now - cached[0] < 12.0:
+        if cached and now - cached[0] < 15.0:
             return cached[1]
         bar = OKX_BAR.get(interval, "1m")
         url = (f"https://www.okx.com/api/v5/market/candles"

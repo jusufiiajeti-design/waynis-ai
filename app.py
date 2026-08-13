@@ -3,7 +3,7 @@
 
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
-SCAN_BATCH = 100                # 📡 skanon TË GJITHA monedhat çdo cikël (100)
+SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çdo cikël
 TRADE_RISK = 0.0005             # ~$5 risk SL/tregti me $10k (0.05%) — HYRJE TË VOGLA (kërkesë: "$5")
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
@@ -339,6 +339,35 @@ class MarketData:
     # ------------------------------------------------------------------
     # Tickers (all watchlist prices in one OKX call)
     # ------------------------------------------------------------------
+    async def scan_universe(self, min_vol_usdt=50000):
+        """🌐 UNIVERSI DINAMIK: TË GJITHA çiftet USDT në OKX me vëllim 24h
+        ≥ min_vol_usdt (likuiditet real). WATCHLIST-i mbetet bërthama (me
+        simbole fallback), por kthehen edhe të gjitha monedhat e tjera.
+        Cache 10 min — një kërkesë për të gjithë tregun."""
+        now = time.time()
+        cached = self._cache.get("universe")
+        if cached and now - cached[0] < 600:
+            return cached[1]
+        out = [(w[0], w[1], w[2]) for w in WATCHLIST]
+        seen = {w[0] for w in out}
+        try:
+            data = await _http_json_async(
+                "https://www.okx.com/api/v5/market/tickers?instType=SPOT")
+            if data.get("code") == "0":
+                for t in data["data"]:
+                    sym = t.get("instId", "")
+                    if not sym.endswith("-USDT") or sym in seen:
+                        continue
+                    vol_usdt = _safe_float(t.get("volCcy24h"))
+                    if vol_usdt < min_vol_usdt:
+                        continue
+                    out.append((sym, None, None))
+                    seen.add(sym)
+        except Exception:
+            pass
+        self._cache["universe"] = (now, out)
+        return out
+
     async def fetch_all_tickers(self) -> dict:
         """Returns {okx_symbol: {price, open24, high24, low24, vol24, chg24, ts}}"""
         now = time.time()
@@ -355,7 +384,7 @@ class MarketData:
                 fresh = {}
                 for t in data["data"]:
                     sym = t["instId"]
-                    if sym not in {w[0] for w in WATCHLIST}:
+                    if not sym.endswith("-USDT"):
                         continue
                     last = _safe_float(t.get("last"))
                     open24 = _safe_float(t.get("open24h"))
@@ -428,7 +457,7 @@ class MarketData:
         ckey = (okx_symbol, interval, limit)
         now = time.time()
         cached = self._cache.get(ckey)
-        if cached and now - cached[0] < 12.0:
+        if cached and now - cached[0] < 15.0:
             return cached[1]
         bar = OKX_BAR.get(interval, "1m")
         url = (f"https://www.okx.com/api/v5/market/candles"
@@ -2279,7 +2308,12 @@ class ScannerAgent(Agent):
         ctx.tickers = tickers
         e.last_tickers = tickers
 
-        syms = [w[0] for w in WATCHLIST]
+        # 🌐 UNIVERSI DINAMIK: TË GJITHA monedhat me likuiditet (jo vetëm 67)
+        try:
+            uni = await ctx.market.scan_universe()
+            syms = [w[0] for w in uni] if uni else [w[0] for w in WATCHLIST]
+        except Exception:
+            syms = [w[0] for w in WATCHLIST]
         open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
         batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
@@ -2296,7 +2330,7 @@ class ScannerAgent(Agent):
         # ⚡ KËRKESA PARALELE (semafor 10) — 100 monedha në ~3s në vend të ~20s
         _SEM = getattr(self, "_scan_sem", None)
         if _SEM is None:
-            _SEM = asyncio.Semaphore(10)
+            _SEM = asyncio.Semaphore(8)
             self._scan_sem = _SEM
 
         async def _fetch(sym):
@@ -4828,7 +4862,7 @@ async def status():
         "session": {
             "started_at": engine.started_at,
             "scan_count": engine.scan_count,
-            "watchlist_size": len(WATCHLIST),
+            "watchlist_size": len(getattr(engine.market, "_cache", {}).get("universe", (0, None))[1]) if getattr(engine.market, "_cache", {}).get("universe") else len(WATCHLIST),
             "scanned_per_cycle": SCAN_BATCH,
         },
         "agents": engine.agents_info(),

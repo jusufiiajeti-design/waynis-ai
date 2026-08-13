@@ -137,7 +137,12 @@ class ScannerAgent(Agent):
         ctx.tickers = tickers
         e.last_tickers = tickers
 
-        syms = [w[0] for w in WATCHLIST]
+        # 🌐 UNIVERSI DINAMIK: TË GJITHA monedhat me likuiditet (jo vetëm 67)
+        try:
+            uni = await ctx.market.scan_universe()
+            syms = [w[0] for w in uni] if uni else [w[0] for w in WATCHLIST]
+        except Exception:
+            syms = [w[0] for w in WATCHLIST]
         open_syms = {p["symbol"] for p in e.open_positions()}
         now = time.time()
         batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
@@ -154,7 +159,7 @@ class ScannerAgent(Agent):
         # ⚡ KËRKESA PARALELE (semafor 10) — 100 monedha në ~3s në vend të ~20s
         _SEM = getattr(self, "_scan_sem", None)
         if _SEM is None:
-            _SEM = asyncio.Semaphore(10)
+            _SEM = asyncio.Semaphore(8)
             self._scan_sem = _SEM
 
         async def _fetch(sym):
