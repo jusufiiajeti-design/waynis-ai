@@ -143,17 +143,34 @@ class ScannerAgent(Agent):
         batch = (syms[idx % len(syms):] + syms[:idx % len(syms)])[:SCAN_BATCH]
 
         scanned = []
+        to_fetch = []
         for sym in batch:
             if sym in open_syms:
                 continue
-            if sym in e.cooldown and now - e.cooldown[sym] < COOLDOWN_SECONDS:  # ⚡ rihyrje pas 0.3s — qarkullim maksimal
+            if sym in e.cooldown and now - e.cooldown[sym] < COOLDOWN_SECONDS:  # ⚡ rihyrje pas 0.1s
                 continue
-            klines = await ctx.market.fetch_klines(sym, "5m", 120)   # 5m sinjale (më pak zhurmë)
+            to_fetch.append(sym)
+
+        # ⚡ KËRKESA PARALELE (semafor 10) — 100 monedha në ~3s në vend të ~20s
+        _SEM = getattr(self, "_scan_sem", None)
+        if _SEM is None:
+            _SEM = asyncio.Semaphore(10)
+            self._scan_sem = _SEM
+
+        async def _fetch(sym):
+            async with _SEM:
+                try:
+                    kl = await ctx.market.fetch_klines(sym, "5m", 120)
+                    return sym, kl
+                except Exception:
+                    return sym, []
+
+        results = await asyncio.gather(*(_fetch(s) for s in to_fetch))
+        for sym, klines in results:
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.01)   # ⚡ shumë më i shpejtë me cache 12s
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")
