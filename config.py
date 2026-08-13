@@ -12,8 +12,8 @@ STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
-MAX_OPEN = 150                  # 150 pozicione njëkohësisht — qarkullim I MADH (kërkesë)
-MAX_SAME_DIRECTION = 12         # 🧭 max 12 SHORT ose 12 LONG njëherësh — qarkullim i madh
+MAX_OPEN = 250                  # 250 pozicione njëkohësisht — qarkullim SHUMË I MADH (kërkesë)
+MAX_SAME_DIRECTION = 20         # 🧭 max 20 SHORT ose 20 LONG njëherësh — më shumë pozicione
                                 # hapjen masive në drejtim të gabuar (sot: 27 SHORT
                                 # njëherësh → të gjitha goditën SL 2%)
 
@@ -67,12 +67,12 @@ LOSS_STREAK_LIMIT = 4           # 4 humbje radhazi → push i përkohshëm
 LOSS_STREAK_PAUSE_MIN = 30      # push 30 min (vetëm hyrjet; pozicionet e hapura s'preken)
 DAILY_STOP_PCT = 0.02           # −2% e bilancit në ditë → ndalo deri nesër
 GOAL_BALANCE = 1_000_000.0      # 🎯 synimi i përdoruesit: $1,000,000 (vetëm ekran)
-COOLDOWN_SECONDS = 0.3          # ⚡ rihyrje pas 0.3s — qarkullim edhe më i shpejtë
+COOLDOWN_SECONDS = 0.1          # ⚡⚡ rihyrje pas 0.1s — qarkullim MAKSIMAL (kërkesë)
 
 # ---- 🛡️ KUFIRI I EKSPOZIMIT TOTAL (mbrojtje për qarkullimin e madh) ----
 # Notionali i hapur nuk mund të kalojë MAX_PORTFOLIO_LEVERAGE × bilanci —
 # me 150 pozicione pa këtë, një lëvizje e fortë do ta fshinte llogarinë.
-MAX_PORTFOLIO_LEVERAGE = 6.0     # maksimumi 6× bilanci në pozicione të hapura
+MAX_PORTFOLIO_LEVERAGE = 8.0     # maksimumi 8× bilanci (me risk $5/tregti, ekspozimi ~$250/tregti)
 
 # ---- 📈 DCA (dollar-cost averaging) mode ----
 DCA_ENABLED = False              # off until user turns it on

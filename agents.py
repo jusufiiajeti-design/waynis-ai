@@ -153,7 +153,7 @@ class ScannerAgent(Agent):
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.01)   # ⚡ shumë më i shpejtë me cache 12s
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")

@@ -204,7 +204,14 @@ class MarketData:
     # ------------------------------------------------------------------
     async def fetch_klines(self, okx_symbol: str, interval: str = "1m",
                            limit: int = 150) -> list:
-        """Returns list of {t,o,h,l,c,v} oldest -> newest."""
+        """Returns list of {t,o,h,l,c,v} oldest -> newest.
+        ⚡ CACHE 12s: kthehen të dhënat e ruajtura pa kërkesë HTTP të re —
+        kjo e përshpejton qarkullimin 5-10× (Scanner skanon 100 monedha)."""
+        ckey = (okx_symbol, interval, limit)
+        now = time.time()
+        cached = self._cache.get(ckey)
+        if cached and now - cached[0] < 12.0:
+            return cached[1]
         bar = OKX_BAR.get(interval, "1m")
         url = (f"https://www.okx.com/api/v5/market/candles"
                f"?instId={okx_symbol}&bar={bar}&limit={limit}")
@@ -225,6 +232,7 @@ class MarketData:
                     if _safe_float(r[4]) > 0
                 ]
                 if candles:
+                    self._cache[ckey] = (time.time(), candles)
                     return candles
         except Exception:
             pass
@@ -242,12 +250,14 @@ class MarketData:
                 data = await _http_json_async(url)
                 if isinstance(data, list):
                     rows = sorted(data, key=lambda r: r[0])[-limit:]
-                    return [
+                    out = [
                         {"t": int(r[0]) * 1000, "o": _safe_float(r[3]),
                          "h": _safe_float(r[2]), "l": _safe_float(r[1]),
                          "c": _safe_float(r[4]), "v": _safe_float(r[5])}
                         for r in rows
                     ]
+                    self._cache[ckey] = (time.time(), out)
+                    return out
             except Exception:
                 pass
         return []
