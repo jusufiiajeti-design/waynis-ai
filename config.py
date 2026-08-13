@@ -3,7 +3,7 @@
 STARTING_BALANCE = 10_000.0     # USDT, paper account
 CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
 SCAN_BATCH = 100                # 📡 skanon TË GJITHA monedhat çdo cikël (100)
-TRADE_RISK = 0.0020             # ~$20 risk SL/tregti me $10k (0.20%) — HYRJE TË MËDHA (kërkesë)
+TRADE_RISK = 0.0005             # ~$5 risk SL/tregti me $10k (0.05%) — HYRJE TË VOGLA (kërkesë: "$5")
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -50,8 +50,8 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
 COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
-COMPOUND_MIN_RISK = 2.0       # rreziku minimal ($2) — s'bie më poshtë
-COMPOUND_MAX_RISK = 100.0     # rreziku maksimal ($100) — hyrje shumë të mëdha pas fitoreve
+COMPOUND_MIN_RISK = 5.0       # rreziku fiks ($5) — siç kërkoi përdoruesi
+COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5) — KURRË më shumë se $5 (kërkesë)
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
