@@ -457,7 +457,7 @@ class MarketData:
         ckey = (okx_symbol, interval, limit)
         now = time.time()
         cached = self._cache.get(ckey)
-        if cached and now - cached[0] < 15.0:
+        if cached and now - cached[0] < 30.0:
             return cached[1]
         bar = OKX_BAR.get(interval, "1m")
         url = (f"https://www.okx.com/api/v5/market/candles"
@@ -2330,7 +2330,7 @@ class ScannerAgent(Agent):
         # ⚡ KËRKESA PARALELE (semafor 10) — 100 monedha në ~3s në vend të ~20s
         _SEM = getattr(self, "_scan_sem", None)
         if _SEM is None:
-            _SEM = asyncio.Semaphore(8)
+            _SEM = asyncio.Semaphore(12)
             self._scan_sem = _SEM
 
         async def _fetch(sym):
@@ -2341,12 +2341,23 @@ class ScannerAgent(Agent):
                 except Exception:
                     return sym, []
 
+        # 🚫 SKIP-LIST: monedhat pa të dhëna (të sapolistuara / pa histori) nuk
+        # provohen përsëri për 30 min — kursen kërkesa e kohë (262 → ~120 live).
+        now2 = time.time()
+        dead = getattr(e, "_dead_syms", {})
+        e._dead_syms = dead
+        to_fetch = [s for s in to_fetch
+                    if s not in dead or now2 - dead[s] > 1800]
+
         results = await asyncio.gather(*(_fetch(s) for s in to_fetch))
         for sym, klines in results:
             if len(klines) >= 30:
                 ctx.candles[sym] = klines
                 scanned.append(sym)
                 e.scan_count += 1          # 🔢 charts analysed
+                dead.pop(sym, None)
+            else:
+                dead[sym] = now2           # pa të dhëna → mos e provo së shpejti
 
         if not scanned:
             self.report("Duke skanuar tregjet… asnjë simbol i disponueshëm këtë cikël")

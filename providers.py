@@ -239,7 +239,7 @@ class MarketData:
         ckey = (okx_symbol, interval, limit)
         now = time.time()
         cached = self._cache.get(ckey)
-        if cached and now - cached[0] < 15.0:
+        if cached and now - cached[0] < 30.0:
             return cached[1]
         bar = OKX_BAR.get(interval, "1m")
         url = (f"https://www.okx.com/api/v5/market/candles"
