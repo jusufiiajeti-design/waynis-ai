@@ -9,6 +9,11 @@ strategy's weight reflects its recent performance), so the bot adapts
 over time: strategies that keep winning get more influence.
 """
 import math
+try:
+    from mr_pipeline import analyze_signal, DEFAULT_CONFIG as MR_CFG
+except Exception:
+    analyze_signal = None
+    MR_CFG = None
 
 # ---------------------------------------------------------------------------
 # Indicators (shared)
@@ -301,10 +306,27 @@ def mean_reversion(symbol, k, ticker):
     return None
 
 
-# 🎯 VETËM MEAN REVERSION — të gjitha strategjitë e tjera U FSHIËN
+def mean_reversion_v1(symbol, k, ticker):
+    """🧬 MEAN REVERSION V1 — Multi-Agent Pipeline (port i JS-së):
+    Regime (ADX<25 + EMA50 slope) → sinjal MR (z-score ≤-2/+2 me Bollinger
+    + RSI ≤35/≥65 + pa spike ATR) → Konfirmim (≥3 nga 5) → sinjal vetëm
+    nëse kalon gjithçka. Më selektiv se RSI 40/60 — më pak tregti, por
+    vetëm në treg anësor (pa trend), ku MR fiton."""
+    if analyze_signal is None or len(k) < 60:
+        return None
+    try:
+        sig = analyze_signal(k, MR_CFG)
+        if not sig:
+            return None
+        return {"direction": sig["direction"], "confidence": sig["confidence"]}
+    except Exception:
+        return None
+
+
+# 🎯 VETËM MEAN REVERSION V1 — pipeline i ri (kërkesë e përdoruesit)
 # (kërkesa e përdoruesit). Kjo është strategjia e vetme aktive:
 # RSI < 40 → BUY (i mbishitur, kthehet lart) · RSI > 60 → SELL
 # (i mbingarkuar, kthehet poshtë) · TP 2.0% / SL 1.5% · testuar pozitiv.
 STRATEGIES = [
-    {"name": "Mean Reversion",   "icon": "🎯", "fn": mean_reversion},
+    {"name": "Mean Reversion V1", "icon": "🧬", "fn": mean_reversion_v1},
 ]

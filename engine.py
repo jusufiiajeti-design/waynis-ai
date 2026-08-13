@@ -845,6 +845,22 @@ class PaperEngine:
                 return
             with self._conn() as c:
                 bal = c.execute("SELECT balance FROM account WHERE id=1").fetchone()[0]
+            # 🧨 KILL SWITCH (port i JS-së): −8% nga kulmi i llogarisë → ndal
+            # të gjitha tregtitë e reja deri në rivendosje manuale.
+            try:
+                with self._conn() as c:
+                    peak = c.execute("SELECT peak FROM account WHERE id=1").fetchone()[0]
+                eq_now = self.account().get("equity", bal)
+                dd_pct = (peak - eq_now) / peak if peak and peak > 0 else 0.0
+                if dd_pct >= 0.08 and getattr(self, "daily_stop_until", 0) == 0:
+                    self.daily_stop_until = time.time() + 30 * 24 * 3600  # deri në reset
+                    self._event("lock",
+                                f"🧨 KILL SWITCH: −{dd_pct*100:.1f}% nga kulmi "
+                                f"${peak:.2f} → ndalim i plotë i tregtive deri në "
+                                f"rivendosje manuale. Kapitali i mbrojtur.",
+                                None)
+            except Exception:
+                pass
             loss_pct = (self.daily_start_bal - bal) / STARTING_BALANCE
             if loss_pct >= DAILY_STOP_PCT:
                 self.daily_stop_until = now + 24 * 3600

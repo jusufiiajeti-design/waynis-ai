@@ -3,7 +3,7 @@
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-ORDER = ["config", "turso", "providers", "brain", "strategies",
+ORDER = ["config", "turso", "providers", "brain", "mr_pipeline", "strategies",
          "learning", "backtest", "agents", "engine", "main"]
 
 def main():
