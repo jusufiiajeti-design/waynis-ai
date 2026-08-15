@@ -938,11 +938,14 @@ class SizerAgent(Agent):
         # + tarifat (0.1% hyrje + 0.1% dalje mbi notional). Llogarisim qty
         # që të plotësojë:  qty*stop_dist + qty*entry*2*FEE_RATE <= risk_total
         # ku risk_total = $2. Zgjidhje: qty = risk_total / (stop_dist + entry*2*FEE_RATE)
-        risk_total = max(risk_amount, 2.0)   # të paktën $2, por jo më pak se risk_amount
+        # 💵 min risk = 2% e balancës (me $50 → $1); kapak pozicioni = 100% e
+        # balancës që notionali të arrijë ~$50 (hyrje $50, kërkesë e përdoruesit)
+        min_risk = STARTING_BALANCE * 0.02
+        risk_total = max(risk_amount, min_risk)   # të paktën 2% e balancës
         denom = stop_dist + entry * 2 * FEE_RATE
         qty = risk_total / denom if denom > 0 else 0.0
-        if qty * entry > equity * 0.35:
-            qty = equity * 0.35 / entry
+        if qty * entry > equity * 1.0:
+            qty = equity * 1.0 / entry
         ctx.qty = qty
         loss_est = qty * stop_dist + qty * entry * 2 * FEE_RATE
         self.report(f"{qty:.4f} @ {entry:.6g} — humbja max ${loss_est:.2f} "
@@ -1223,11 +1226,11 @@ class MilioneriAgent(Agent):
             progress = bal / GOAL_BALANCE * 100.0
             # 🏅 nivel i ri i arritur (çdo +$100 mbi kapitalin fillestar)
             last = getattr(e, "_goal_last_rung", 0)
-            rung = int((bal - STARTING_BALANCE) // 100)
+            rung = int((bal - STARTING_BALANCE) // 5)   # hapa +$5 me balancë të vogël
             if rung > last:
                 e._goal_last_rung = rung
                 e._event("goal",
-                         f"💰 MILIONERI: niveli +${rung*100:.0f} i arritur — "
+                         f"💰 MILIONERI: niveli +${rung*5:.0f} i arritur — "
                          f"{progress:.4f}% e rrugës drejt $1M. Bilanci ${bal:,.2f}",
                          None)
             # ⚠️ paralajmërim i sinqertë kur rruga kërcënohet

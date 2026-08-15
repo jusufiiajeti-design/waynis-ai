@@ -1,10 +1,10 @@
 # ============ config.py ============
 """Waynis AI — central configuration (shared by engine and agents)."""
 
-STARTING_BALANCE = 10_000.0     # USDT, paper account
+STARTING_BALANCE = 50.0          # 💵 balanca demo $50 (si startingCapital në kodin JS që dërgove)
 CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
 SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çdo cikël
-TRADE_RISK = 0.0005             # ~$5 risk SL/tregti me $10k (0.05%) — HYRJE TË VOGLA (kërkesë: "$5")
+TRADE_RISK = 0.02              # 💵 2% risk/tregti me $50 = $1 → pozicion ~$50 (hyrje $50, kërkesë)
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -51,8 +51,8 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
 COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
-COMPOUND_MIN_RISK = 5.0       # rreziku fiks ($5) — siç kërkoi përdoruesi
-COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5) — KURRË më shumë se $5 (kërkesë)
+COMPOUND_MIN_RISK = 1.0       # rreziku minimal ($1 = 2% e $50)
+COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5 = 10% e $50) — kapaku i sigurt
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
@@ -3122,11 +3122,14 @@ class SizerAgent(Agent):
         # + tarifat (0.1% hyrje + 0.1% dalje mbi notional). Llogarisim qty
         # që të plotësojë:  qty*stop_dist + qty*entry*2*FEE_RATE <= risk_total
         # ku risk_total = $2. Zgjidhje: qty = risk_total / (stop_dist + entry*2*FEE_RATE)
-        risk_total = max(risk_amount, 2.0)   # të paktën $2, por jo më pak se risk_amount
+        # 💵 min risk = 2% e balancës (me $50 → $1); kapak pozicioni = 100% e
+        # balancës që notionali të arrijë ~$50 (hyrje $50, kërkesë e përdoruesit)
+        min_risk = STARTING_BALANCE * 0.02
+        risk_total = max(risk_amount, min_risk)   # të paktën 2% e balancës
         denom = stop_dist + entry * 2 * FEE_RATE
         qty = risk_total / denom if denom > 0 else 0.0
-        if qty * entry > equity * 0.35:
-            qty = equity * 0.35 / entry
+        if qty * entry > equity * 1.0:
+            qty = equity * 1.0 / entry
         ctx.qty = qty
         loss_est = qty * stop_dist + qty * entry * 2 * FEE_RATE
         self.report(f"{qty:.4f} @ {entry:.6g} — humbja max ${loss_est:.2f} "
@@ -3407,11 +3410,11 @@ class MilioneriAgent(Agent):
             progress = bal / GOAL_BALANCE * 100.0
             # 🏅 nivel i ri i arritur (çdo +$100 mbi kapitalin fillestar)
             last = getattr(e, "_goal_last_rung", 0)
-            rung = int((bal - STARTING_BALANCE) // 100)
+            rung = int((bal - STARTING_BALANCE) // 5)   # hapa +$5 me balancë të vogël
             if rung > last:
                 e._goal_last_rung = rung
                 e._event("goal",
-                         f"💰 MILIONERI: niveli +${rung*100:.0f} i arritur — "
+                         f"💰 MILIONERI: niveli +${rung*5:.0f} i arritur — "
                          f"{progress:.4f}% e rrugës drejt $1M. Bilanci ${bal:,.2f}",
                          None)
             # ⚠️ paralajmërim i sinqertë kur rruga kërcënohet

@@ -1,9 +1,9 @@
 """Waynis AI — central configuration (shared by engine and agents)."""
 
-STARTING_BALANCE = 10_000.0     # USDT, paper account
+STARTING_BALANCE = 50.0          # 💵 balanca demo $50 (si startingCapital në kodin JS që dërgove)
 CYCLE_SECONDS = 1               # ⚡ cikël 1s — qarkullim MAKSIMAL (kërkesë e përdoruesit)
 SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çdo cikël
-TRADE_RISK = 0.0005             # ~$5 risk SL/tregti me $10k (0.05%) — HYRJE TË VOGLA (kërkesë: "$5")
+TRADE_RISK = 0.02              # 💵 2% risk/tregti me $50 = $1 → pozicion ~$50 (hyrje $50, kërkesë)
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
 TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
@@ -50,8 +50,8 @@ EQUITY_LOCK_PAUSE_MIN = 10       # pause new entries after a lock
 # asnjë mbrojtje nuk ndërhyn më në tregtimin e lirë.
 COMPOUND_WIN_MULT = 2.0       # ×2.0 pas fitoreje (KËRKESË E PËRDORUESIT — komponim ×2)
 COMPOUND_LOSS_MULT = 0.5      # ×0.5 pas humbjeje (MBROJTËS — humbjet tkurren)
-COMPOUND_MIN_RISK = 5.0       # rreziku fiks ($5) — siç kërkoi përdoruesi
-COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5) — KURRË më shumë se $5 (kërkesë)
+COMPOUND_MIN_RISK = 1.0       # rreziku minimal ($1 = 2% e $50)
+COMPOUND_MAX_RISK = 5.0      # rreziku maksimal ($5 = 10% e $50) — kapaku i sigurt
 
 # ---- 💰 KYÇJA E FITIMIT NË SHKALLË $60 (kërkesa e përdoruesit) ----
 # Çdo herë që fitimi arrin +$60 (bilanci 10,060 → 10,120 → 10,180...), ai
