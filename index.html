@@ -453,7 +453,10 @@
       </div>
       <div class="set">
         <div><div class="l">Efekt komponimi (Compound)</div><div class="d">Madhësia e pozicioneve rritet me equity — fitimet ri-investohen</div></div>
-        <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div class="switch on" id="swCompound" onclick="toggleCompound()"></div>
+          <span class="kbd" id="compoundMult" style="margin-left:4px">×2</span>
+        </div>
       </div>
       <div class="set" style="border-top:1px dashed rgba(34,197,94,.4);margin-top:6px">
         <div><div class="l">🔒 Mbrojtja e fitimit (Profit Lock)</div><div class="d">Nëse equity bie më shumë se <b id="lockPctLbl">2%</b> nga kulmi → mbyllen të gjitha pozicionet dhe fitimet ruhen</div></div>
@@ -778,6 +781,8 @@ function renderStatus(){
   const sw=$("swCompound");
   sw.classList.toggle("on", !!S.status.compound);
   $("modeKbd").textContent = S.status.compound?"KOMPONIM":"FIKS";
+  const cm = S.status.compound_mult||1;
+  if($("compoundMult")) $("compoundMult").textContent = "×"+Number(cm).toFixed(1);
   const g=a.growth||1;
   const gk=$("growthKbd"); gk.textContent=fmt(g,3)+"x"; gk.className="kbd "+(g>=1?"up":"dn");
   // mode state (paper / real)

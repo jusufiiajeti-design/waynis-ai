@@ -4925,6 +4925,7 @@ async def status():
         "cycle_seconds": CYCLE_SECONDS,
         "auto_trade": engine.auto_trade,
         "compound": engine.compound,
+        "compound_mult": getattr(engine, "asym_mult", 1.0),
         "mode": engine.mode,
         "real": real,
         "fee_rate": FEE_RATE,
@@ -5041,7 +5042,8 @@ async def set_settings(body: dict):
             pct=body.get("equity_lock_pct"))
         return {"ok": True, "lock": info}
     return {"ok": True, "auto_trade": engine.auto_trade,
-            "compound": engine.compound, "mode": engine.mode}
+            "compound": engine.compound,
+        "compound_mult": getattr(engine, "asym_mult", 1.0), "mode": engine.mode}
 
 
 @app.get("/api/learning")
