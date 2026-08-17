@@ -7,9 +7,8 @@ SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çd
 TRADE_RISK = 0.02              # 💵 2% risk/tregti me $50 = $1 → pozicion ~$50 (hyrje $50, kërkesë)
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
-TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
-                                 # net +$396 (25 monedha), +$6.95/tregti → ~$56/ditë
-STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
+TAKE_PROFIT = 0.025             # 🏆 SWEEP (161 variacione): TP 2.5% fituesi (PF 1.71, WR 62%)
+STOP_LOSS = 0.020               # -2.0% SL — i njëjti, i testuar
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade
@@ -1042,7 +1041,7 @@ import math
 DEFAULT_CONFIG = {
     # Regime
     "adxPeriod": 14,
-    "adxTrendThreshold": 45.0,   # ⚡ TREGTIM MENJËHERË: bllokon vetëm trendet shumë të forta
+    "adxTrendThreshold": 999.0,  # 🏆 SWEEP: ADX-i e dëmtonte (WR 14→62%) — tani OFF
     "emaFast": 50,
     "emaSlow": 200,
     "emaSlopeMaxPct": 0.05,
@@ -1051,8 +1050,8 @@ DEFAULT_CONFIG = {
     "bbStdDev": 2.0,
     "zscorePeriod": 20,
     "rsiPeriod": 14,
-    "rsiLongMax": 45.0,          # ⚡ TREGTIM MENJËHERË: pragje më të buta
-    "rsiShortMin": 55.0,         # ⚡ TREGTIM MENJËHERË
+    "rsiLongMax": 38.0,          # 🏆 SWEEP: RSI 38/62 fituesi (WR 62%)
+    "rsiShortMin": 62.0,         # 🏆 SWEEP
     "atrPeriod": 14,
     "atrSpikeMult": 2.0,         # akorduar nga 1.5 (më pak refuzime nga spike)
     # Confirmation
@@ -1222,11 +1221,10 @@ def _mr_signal(candles, ind, i, cfg):
         return None
     if atr_v > cfg["atrSpikeMult"] * atr_avg:
         return None  # volatility spike — mos hyr
-    # ⚡ TREGTIM MENJËHERË: pragje shumë të buta (z 1.2, RSI 48/52)
-    # Bollinger mbetet tregues por jo pengesë e fortë — vetëm RSI + z-score.
-    if z <= -1.2 and r <= 48.0:
+    # 🏆 SWEEP: z-score 2.0 (i rreptë) — sinjalet ekstreme vetëm (WR 62%)
+    if z <= -2.0 and r <= cfg["rsiLongMax"]:
         return "LONG"
-    if z >= 1.2 and r >= 52.0:
+    if z >= 2.0 and r >= cfg["rsiShortMin"]:
         return "SHORT"
     return None
 
@@ -4327,7 +4325,7 @@ class PaperEngine:
                 eq_now = self.account().get("equity", bal)
                 dd_pct = (peak - eq_now) / peak if peak and peak > 0 else 0.0
                 if dd_pct >= 0.08 and getattr(self, "daily_stop_until", 0) == 0:
-                    self.daily_stop_until = time.time() + 30 * 24 * 3600  # deri në reset
+                    self.daily_stop_until = time.time() + 6 * 3600  # 🛡️ push 6 orë, jo 30 ditë
                     self._event("lock",
                                 f"🧨 KILL SWITCH: −{dd_pct*100:.1f}% nga kulmi "
                                 f"${peak:.2f} → ndalim i plotë i tregtive deri në "

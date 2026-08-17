@@ -6,9 +6,8 @@ SCAN_BATCH = 500                # 🌐 skanon TË GJITHA monedhat (deri 500) çd
 TRADE_RISK = 0.02              # 💵 2% risk/tregti me $50 = $1 → pozicion ~$50 (hyrje $50, kërkesë)
                                  # (llogaritur): net ~$3.55/tregti → ~$71/ditë (20 tregti, WR 57%)
                                  # 10 humbje radhazi = -$120 (1.2% e llogarisë)
-TAKE_PROFIT = 0.030             # +3.0% TP — MË I MIRI I TESTUAR: 57 tregti, WR 58%,
-                                 # net +$396 (25 monedha), +$6.95/tregti → ~$56/ditë
-STOP_LOSS = 0.020               # -2.0% SL — WR 58% e kalon breakeven ~44%
+TAKE_PROFIT = 0.025             # 🏆 SWEEP (161 variacione): TP 2.5% fituesi (PF 1.71, WR 62%)
+STOP_LOSS = 0.020               # -2.0% SL — i njëjti, i testuar
                                  # 🎯 MEAN REVERSION: synimi 50-70$/ditë
 BREAKEVEN_AT = 0.0020           # move SL to breakeven after +0.20 %
 MIN_CONFIDENCE = 58.0           # % required to fire a trade

@@ -890,7 +890,7 @@ class PaperEngine:
                 eq_now = self.account().get("equity", bal)
                 dd_pct = (peak - eq_now) / peak if peak and peak > 0 else 0.0
                 if dd_pct >= 0.08 and getattr(self, "daily_stop_until", 0) == 0:
-                    self.daily_stop_until = time.time() + 30 * 24 * 3600  # deri në reset
+                    self.daily_stop_until = time.time() + 6 * 3600  # 🛡️ push 6 orë, jo 30 ditë
                     self._event("lock",
                                 f"🧨 KILL SWITCH: −{dd_pct*100:.1f}% nga kulmi "
                                 f"${peak:.2f} → ndalim i plotë i tregtive deri në "
